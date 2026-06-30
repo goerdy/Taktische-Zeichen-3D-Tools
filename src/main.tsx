@@ -30,6 +30,7 @@ const pages: Array<{ id: PageId; label: string; isPrimary?: boolean }> = [
 ];
 
 const projectLinkUrl = "https://github.com/jonas-koeritz/Taktische-Zeichen";
+const sourceCodeUrl = "https://github.com/goerdy/Taktische-Zeichen-3D-Tools";
 
 const runtimeLibraries = [
   "React",
@@ -819,6 +820,12 @@ function App() {
                 <div className="text-stack">
                   <p className="muted">
                     Projekt von Philipp &quot;goerdy&quot; Gürth auf pq5.de.
+                  </p>
+                  <p className="muted">
+                    Der Quellcode liegt auf GitHub:{" "}
+                    <a href={sourceCodeUrl} target="_blank" rel="noreferrer">
+                      {sourceCodeUrl}
+                    </a>
                   </p>
                   <p className="muted">
                     Vibecoding-Projekt mit <strong>gpt-5.4-mini</strong>.

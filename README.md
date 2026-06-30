@@ -2,6 +2,12 @@
 
 Browserbasierte 3D-Tools zum Erzeugen taktischer Zeichen als 3MF-Dateien fuer den Mehrfarb-3D-Druck.
 
+## Live-Version
+
+Eine lauffaehige Instanz ist hier verfuegbar:
+
+https://pq5.de/pq5/3D-Tools/TaktischeZeichen/
+
 ## Funktionen
 
 - Taktische Zeichen als 3D-Tag exportieren
@@ -23,8 +29,6 @@ Build:
 ```bash
 npm run build
 ```
-
-Der aktuelle statische Release-Stand liegt in `release0.3/`.
 
 ## Datenschutz
 
