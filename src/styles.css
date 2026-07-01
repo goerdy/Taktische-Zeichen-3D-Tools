@@ -158,9 +158,24 @@ h2 {
   list-style: none;
   cursor: pointer;
   padding: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   font-size: 15px;
   font-weight: 600;
   color: #334155;
+}
+
+.details-panel summary::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-right: 2px solid #64748b;
+  border-bottom: 2px solid #64748b;
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform 0.18s ease;
 }
 
 .details-panel summary::-webkit-details-marker {
@@ -169,6 +184,10 @@ h2 {
 
 .details-panel[open] summary {
   border-bottom: 1px solid #d9e0ea;
+}
+
+.details-panel[open] summary::after {
+  transform: rotate(225deg) translateY(-1px);
 }
 
 .details-content {
@@ -349,6 +368,40 @@ select {
 .placeholder-card a {
   color: #0f766e;
   word-break: break-word;
+}
+
+.support-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.support-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 10px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  text-decoration: none;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+
+.support-button:hover {
+  border-color: #0f766e;
+  background: #f8fafc;
+  transform: translateY(-1px);
+}
+
+.support-image {
+  display: block;
+  height: 44px;
+  width: auto;
 }
 
 .stack-card {

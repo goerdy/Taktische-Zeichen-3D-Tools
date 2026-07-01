@@ -2137,6 +2137,7 @@ function App() {
                   <p className="muted">
                     Vibecoding-Projekt mit <strong>gpt-5.4-mini</strong>.
                   </p>
+                  <p className="muted">Lizenz des Quellcodes: CC-BY.</p>
                   <p className="muted">Vielen Dank für die Nutzung und das Feedback.</p>
                 </div>
               </SectionCard>
@@ -2156,6 +2157,7 @@ function App() {
                     Die THW-Dienststellungskennzeichen stammen von Wikimedia Commons, wurden von
                     Thiemo Schuff erstellt und stehen unter CC0 1.0 / Public Domain Dedication.
                   </p>
+                  <p className="muted">Der Quellcode dieses Projekts steht unter CC-BY.</p>
                   <p className="muted">
                     Verwendete Bibliotheken:
                   </p>
@@ -2164,6 +2166,35 @@ function App() {
                       <li key={library}>{library}</li>
                     ))}
                   </ul>
+                </div>
+              </SectionCard>
+
+              <SectionCard title="Support">
+                <div className="text-stack">
+                  <p className="muted">
+                    Wenn dir das Projekt hilft und du die Weiterentwicklung unterstützen möchtest:
+                  </p>
+                  <div className="support-actions">
+                    <a
+                      className="support-button"
+                      href="https://paypal.me/PhilippGuerth"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      PayPal
+                    </a>
+                    <a
+                      href="https://buymeacoffee.com/goerdy"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <img
+                        className="support-image"
+                        src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                        alt="Buy Me a Coffee"
+                      />
+                    </a>
+                  </div>
                 </div>
               </SectionCard>
 
