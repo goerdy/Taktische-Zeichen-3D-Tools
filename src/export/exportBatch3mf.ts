@@ -44,6 +44,12 @@ export type ExportBatchItem =
       transform?: ItemTransform;
     }
   | {
+      kind: "dienstgrade-fw-nds";
+      config: TagConfig;
+      symbolLayers?: SymbolLayer[];
+      transform?: ItemTransform;
+    }
+  | {
       kind: "atemschutz";
       config: AtemschutzConfig;
       transform?: ItemTransform;
@@ -86,7 +92,11 @@ async function build3mfArchive(items: ExportBatchItem[]) {
 }
 
 async function buildItemMeshData(item: ExportBatchItem) {
-  if (item.kind === "taktische-zeichen" || item.kind === "dienststellungskennzeichen-thw") {
+  if (
+    item.kind === "taktische-zeichen" ||
+    item.kind === "dienststellungskennzeichen-thw" ||
+    item.kind === "dienstgrade-fw-nds"
+  ) {
     const { baseBottom, baseTop, inlays } = createTagGeometries(item.config, item.symbolLayers);
     const base = mergeMeshData([geometryToMeshData(baseBottom), geometryToMeshData(baseTop)]);
     const objects = [
@@ -104,6 +114,7 @@ async function buildItemMeshData(item: ExportBatchItem) {
 
     return {
       kind: item.kind,
+      config: item.config,
       transform: item.transform,
       objects,
       dispose: () => {
@@ -176,6 +187,20 @@ function buildModelXml(
 
   items.forEach((item, itemIndex) => {
     const itemLabel = items.length > 1 ? ` ${itemIndex + 1}` : "";
+    if (item.kind !== "atemschutz" && shouldExportAsSingleObject(item.config)) {
+      const combinedMesh: ColoredMeshData = { vertices: [], triangles: [] };
+      item.objects.forEach((object) => {
+        const materialIndex = materialIndexByColor.get(normalizeMaterialColor(object.color)) ?? 0;
+        appendColoredMesh(combinedMesh, object.mesh, materialIndex, item.transform);
+      });
+      if (!hasMesh(combinedMesh)) return;
+
+      const objectId = nextObjectId++;
+      objects.push(objectXml(objectId, `${item.kind}${itemLabel} kombiniert`, combinedMesh));
+      buildItems.push(`<item objectid="${objectId}" />`);
+      return;
+    }
+
     item.objects.forEach((object, objectIndex) => {
       const materialIndex = materialIndexByColor.get(normalizeMaterialColor(object.color)) ?? 0;
       const mesh = buildColoredMesh(object.mesh, materialIndex, item.transform);
@@ -292,6 +317,10 @@ function buildColoredMesh(source: MeshData, materialIndex: number, transform?: I
   const mesh: ColoredMeshData = { vertices: [], triangles: [] };
   appendColoredMesh(mesh, source, materialIndex, transform);
   return mesh;
+}
+
+function shouldExportAsSingleObject(config: TagConfig) {
+  return config.baseFormId === "schluesselanhaenger-klein" && config.doubleSided;
 }
 
 function appendColoredMesh(

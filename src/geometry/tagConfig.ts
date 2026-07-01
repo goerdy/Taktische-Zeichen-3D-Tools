@@ -1,11 +1,18 @@
 export type TagConfig = {
-  baseFormId: "molle-hook-v1" | "c-profil-40" | "c-profil-50" | "schluesselanhaenger-klein";
+  baseFormId:
+    | "molle-hook-v1"
+    | "c-profil-40"
+    | "c-profil-50"
+    | "schluesselanhaenger-klein"
+    | "magnet-neodyn-rueckseite";
   width: number;
   height: number;
   baseThickness: number;
   cornerRadius: number;
   hookDepth: number;
   hookStep: number;
+  magnetPocketDiameter: number;
+  magnetPocketDepth: number;
   inlayThickness: number;
   minLineThickness: number;
   symbolScale: number;
@@ -25,6 +32,8 @@ export const defaultTagConfig: TagConfig = {
   cornerRadius: 1.5,
   hookDepth: 10,
   hookStep: 5,
+  magnetPocketDiameter: 10,
+  magnetPocketDepth: 3,
   inlayThickness: 0.4,
   minLineThickness: 0.65,
   symbolScale: 62,

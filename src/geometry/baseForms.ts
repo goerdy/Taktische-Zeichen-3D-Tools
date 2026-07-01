@@ -1,6 +1,11 @@
 import type { TagConfig } from "./tagConfig";
 
-export type BaseFormId = "molle-hook-v1" | "c-profil-40" | "c-profil-50" | "schluesselanhaenger-klein";
+export type BaseFormId =
+  | "molle-hook-v1"
+  | "c-profil-40"
+  | "c-profil-50"
+  | "schluesselanhaenger-klein"
+  | "magnet-neodyn-rueckseite";
 
 export type BaseFormOption = {
   id: BaseFormId;
@@ -62,6 +67,22 @@ export const baseFormOptions: BaseFormOption[] = [
       symbolScale: 90,
       symbolYOffset: 5,
       doubleSided: false,
+      baseColor: "#FFFFFF",
+    },
+  },
+  {
+    id: "magnet-neodyn-rueckseite",
+    name: "Magnet (Neodyn in Rückseite)",
+    defaults: {
+      width: 44,
+      height: 46,
+      baseThickness: 4,
+      cornerRadius: 1,
+      hookDepth: 0,
+      hookStep: 0,
+      magnetPocketDiameter: 10,
+      magnetPocketDepth: 3,
+      symbolScale: 90,
       baseColor: "#FFFFFF",
     },
   },

@@ -14,7 +14,11 @@ export function createBaseShape(config: TagConfig): THREE.Shape {
     return createSmallKeychainShape(config);
   }
 
-  if (config.baseFormId === "c-profil-40" || config.baseFormId === "c-profil-50") {
+  if (
+    config.baseFormId === "c-profil-40" ||
+    config.baseFormId === "c-profil-50" ||
+    config.baseFormId === "magnet-neodyn-rueckseite"
+  ) {
     return createRoundedRectangleShape(config.width, config.height, config.cornerRadius);
   }
 

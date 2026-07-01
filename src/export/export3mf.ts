@@ -209,8 +209,27 @@ function buildModelXml(
   items.forEach((item, itemIndex) => {
     const itemLabel = items.length > 1 ? ` ${itemIndex + 1}` : "";
     const baseMaterialIndex = materialIndexByColor.get(normalizeMaterialColor(item.config.baseColor)) ?? 0;
-    const baseMesh = buildColoredMesh(item.base, baseMaterialIndex, item.transform);
+    if (shouldExportAsSingleObject(item.config)) {
+      const combinedMesh = buildColoredMesh(item.base, baseMaterialIndex, item.transform);
+      item.symbols.forEach((symbol) => {
+        const symbolMaterialIndex = materialIndexByColor.get(normalizeMaterialColor(symbol.color)) ?? baseMaterialIndex;
+        appendColoredMesh(combinedMesh, symbol.mesh, symbolMaterialIndex, item.transform);
+      });
+      if (!hasMesh(combinedMesh)) return;
 
+      const objectId = nextObjectId++;
+      objects.push(
+        objectXml(
+          objectId,
+          `Objekt${itemLabel} ${normalizeMaterialColor(item.config.baseColor)}`,
+          combinedMesh,
+        ),
+      );
+      buildItems.push(`<item objectid="${objectId}" />`);
+      return;
+    }
+
+    const baseMesh = buildColoredMesh(item.base, baseMaterialIndex, item.transform);
     if (hasMesh(baseMesh)) {
       const objectId = nextObjectId++;
       objects.push(objectXml(objectId, `Grundform${itemLabel} ${normalizeMaterialColor(item.config.baseColor)}`, baseMesh));
@@ -250,6 +269,10 @@ function buildColoredMesh(source: MeshData, materialIndex: number, transform?: I
   const mesh: ColoredMeshData = { vertices: [], triangles: [] };
   appendColoredMesh(mesh, source, materialIndex, transform);
   return mesh;
+}
+
+function shouldExportAsSingleObject(config: TagConfig) {
+  return config.baseFormId === "schluesselanhaenger-klein" && config.doubleSided;
 }
 
 function hasMesh(mesh: ColoredMeshData) {

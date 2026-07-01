@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 import { createRoot } from "react-dom/client";
+import { SVGLoader } from "three/examples/jsm/loaders/SVGLoader.js";
 import "./styles.css";
 import { TagPreview } from "./preview/TagPreview";
 import type { TagConfig } from "./geometry/tagConfig";
@@ -11,6 +12,7 @@ import { downloadBatch3mfSet } from "./export/exportBatch3mf";
 import { symbolCatalog } from "./symbols/catalog";
 import { loadLabelLayers } from "./symbols/loadLabelShapes";
 import { loadSymbolLayers } from "./symbols/loadSymbolShapes";
+import { resolveSymbolAssetPath } from "./symbols/assetPath";
 import { cloneSymbolLayers, type SymbolLayer } from "./symbols/symbolLayer";
 import { AtemschutzPreview } from "./atemschutz/AtemschutzPreview";
 import type { AtemschutzConfig } from "./atemschutz/atemschutzConfig";
@@ -20,6 +22,7 @@ import {
   thwDienststellungskennzeichen,
   type DienststellungskennzeichenFormId,
 } from "./dienststellungskennzeichen/thwCatalog";
+import { fwNdsBerufsfeuerwehr, fwNdsBerufsfeuerwehrGroups } from "./dienstgrade-fw-nds/catalog";
 
 type PageId =
   | "taktische-zeichen"
@@ -55,6 +58,9 @@ const runtimeLibraries = [
 ];
 
 const savedSetStorageKey = "goerdys-3d-tools-saved-sets";
+const fwNdsAspectRatioCache = new Map<string, number>();
+const fwNdsMittlererDienstScale = 74.3;
+const fwNdsGehobenerDienstScale = 100;
 const atemschutzPresets: Array<{ id: string; label: string; config: AtemschutzConfig }> = [
   {
     id: "thw",
@@ -109,6 +115,7 @@ type SaveFeedbackKind =
   | "taktische-zeichen"
   | "atemschutz"
   | "dienststellungskennzeichen-thw"
+  | "dienstgrade-fw-nds"
   | null;
 
 type SavedTagSet = SavedBatchBase & {
@@ -128,7 +135,17 @@ type SavedDienststellungskennzeichenSet = SavedBatchBase & {
   config: TagConfig;
 };
 
-type SavedSet = SavedTagSet | SavedAtemschutzSet | SavedDienststellungskennzeichenSet;
+type SavedFwNdsDienstgradSet = SavedBatchBase & {
+  kind: "dienstgrade-fw-nds";
+  badgeId: string;
+  config: TagConfig;
+};
+
+type SavedSet =
+  | SavedTagSet
+  | SavedAtemschutzSet
+  | SavedDienststellungskennzeichenSet
+  | SavedFwNdsDienstgradSet;
 
 type PackedItem = {
   kind: SavedSet["kind"];
@@ -220,6 +237,26 @@ function readSavedSets(): SavedSet[] {
         ];
       }
 
+      if (candidate.kind === "dienstgrade-fw-nds") {
+        const badgeId =
+          typeof (candidate as SavedFwNdsDienstgradSet).badgeId === "string"
+            ? (candidate as SavedFwNdsDienstgradSet).badgeId
+            : fwNdsBerufsfeuerwehr[0].id;
+
+        return [
+          {
+            kind: "dienstgrade-fw-nds",
+            savedAt: candidate.savedAt,
+            quantity,
+            badgeId,
+            config: {
+              ...buildFwNdsDienstgradConfig(),
+              ...candidate.config,
+            } as TagConfig,
+          },
+        ];
+      }
+
       return [
         {
           kind: "taktische-zeichen",
@@ -305,13 +342,108 @@ function buildDienststellungskennzeichenConfig(formId: Dienststellungskennzeiche
   };
 }
 
+function buildFwNdsDienstgradConfig(): TagConfig {
+  const width = 30;
+
+  return {
+    ...defaultTagConfig,
+    baseFormId: "schluesselanhaenger-klein",
+    width,
+    height: computeFwNdsKeychainHeight(width, 122.6 / 127.8, fwNdsGehobenerDienstScale),
+    baseThickness: 3,
+    cornerRadius: 1.5,
+    hookDepth: 0,
+    hookStep: 0,
+    inlayThickness: 0.4,
+    minLineThickness: 0.65,
+    symbolScale: 100,
+    symbolYOffset: 0,
+    doubleSided: false,
+    labelText: "",
+    baseColor: "#0B1020",
+    inlayColor: "#FFFFFF",
+  };
+}
+
+function computeFwNdsKeychainHeight(width: number, aspectRatio: number, symbolScale: number) {
+  const scaleFactor = Math.max(0.1, symbolScale / 100);
+  const rectangularBodyHeight = (width - 3) * aspectRatio * scaleFactor + 3;
+  return Math.round((rectangularBodyHeight + width / 2) * 2) / 2;
+}
+
+async function getFwNdsBadgeAspectRatio(path: string) {
+  const cached = fwNdsAspectRatioCache.get(path);
+  if (cached) return cached;
+
+  const response = await fetch(resolveSymbolAssetPath(path));
+  if (!response.ok) {
+    return 122.6 / 127.8;
+  }
+
+  const svgText = await response.text();
+  const loader = new SVGLoader();
+  const data = loader.parse(svgText);
+  const points = data.paths.flatMap((svgPath) => SVGLoader.createShapes(svgPath)).flatMap((shape) => shape.getPoints(48));
+  if (points.length === 0) {
+    return 122.6 / 127.8;
+  }
+
+  const box = new THREE.Box2().setFromPoints(points);
+  const size = box.getSize(new THREE.Vector2());
+  const aspectRatio = Math.max(size.x, 1) / Math.max(size.y, 1);
+  fwNdsAspectRatioCache.set(path, aspectRatio);
+  return aspectRatio;
+}
+
+function getFwNdsBaseScale(path: string) {
+  return path.includes("/MittlererDienst/") ? fwNdsMittlererDienstScale : fwNdsGehobenerDienstScale;
+}
+
+async function loadFwNdsDienstgradLayers(path: string, config: TagConfig) {
+  const tempConfig: TagConfig = {
+    ...config,
+    baseFormId: "molle-hook-v1",
+    width: Math.max(config.width * 4, 80),
+    height: Math.max(12, config.width - 3),
+    hookDepth: 0,
+    hookStep: 0,
+    symbolScale: config.symbolScale,
+    symbolYOffset: 0,
+  };
+  const layers = stripDienststellungskennzeichenBackground(await loadSymbolLayers(path, tempConfig));
+  const bodyHeight = Math.max(20, config.height - config.width / 2);
+  const targetCenter = new THREE.Vector2(0, bodyHeight / 2);
+  const sourceCenter = new THREE.Vector2(0, tempConfig.height / 2);
+  const rotatedLayers = transformSymbolLayers(layers, (point) => {
+    const localX = point.x - sourceCenter.x;
+    const localY = point.y - sourceCenter.y;
+    return new THREE.Vector2(targetCenter.x - localY, targetCenter.y + localX);
+  });
+  const rotatedBounds = getLayerBounds(rotatedLayers);
+  const alignedLayers = !rotatedBounds
+    ? rotatedLayers
+    : transformSymbolLayers(rotatedLayers, (point) => new THREE.Vector2(point.x, point.y + (3 - rotatedBounds.min.y)));
+
+  const baseScale = getFwNdsBaseScale(path) / 100;
+  if (Math.abs(baseScale - 1) < 0.0001) return alignedLayers;
+
+  return transformSymbolLayers(alignedLayers, (point) =>
+    new THREE.Vector2(point.x * baseScale, 3 + (point.y - 3) * baseScale),
+  );
+}
+
 function getDienststellungskennzeichenName(badgeId: string) {
   return thwDienststellungskennzeichen.find((entry) => entry.id === badgeId)?.name ?? badgeId;
+}
+
+function getFwNdsDienstgradName(badgeId: string) {
+  return fwNdsBerufsfeuerwehr.find((entry) => entry.id === badgeId)?.name ?? badgeId;
 }
 
 function getSavedSetTypeLabel(entry: SavedSet) {
   if (entry.kind === "taktische-zeichen") return "Taktisches Zeichen";
   if (entry.kind === "atemschutz") return "Atemschutz";
+  if (entry.kind === "dienstgrade-fw-nds") return "Dienstgrade FW NDS";
   return "Dienststellungskennzeichen THW";
 }
 
@@ -326,6 +458,10 @@ function getSavedSetDescription(entry: SavedSet) {
     return `${getDienststellungskennzeichenName(entry.badgeId)} · ${
       entry.formId === "schluesselanhaenger" ? "Schlüsselanhänger" : "MOLLE"
     }`;
+  }
+
+  if (entry.kind === "dienstgrade-fw-nds") {
+    return `${getFwNdsDienstgradName(entry.badgeId)} · Schlüsselanhänger`;
   }
 
   const parts = [entry.config.mainTextLine1, entry.config.mainTextLine2, entry.config.bottomTextLine1, entry.config.bottomTextLine2]
@@ -475,17 +611,22 @@ async function loadDienststellungskennzeichenLayers(
     height: Math.max(12, config.width - 3),
     hookDepth: 0,
     hookStep: 0,
-    symbolScale: 100,
+    symbolScale: config.symbolScale,
     symbolYOffset: 0,
   };
   const layers = stripDienststellungskennzeichenBackground(await loadSymbolLayers(path, tempConfig));
   const targetCenter = new THREE.Vector2(0, bodyHeight / 2);
   const sourceCenter = new THREE.Vector2(0, tempConfig.height / 2);
-  return transformSymbolLayers(layers, (point) => {
+  const rotatedLayers = transformSymbolLayers(layers, (point) => {
     const localX = point.x - sourceCenter.x;
     const localY = point.y - sourceCenter.y;
     return new THREE.Vector2(targetCenter.x - localY, targetCenter.y + localX);
   });
+  const bounds = getLayerBounds(rotatedLayers);
+  if (!bounds) return rotatedLayers;
+
+  const yShift = 3 - bounds.min.y;
+  return transformSymbolLayers(rotatedLayers, (point) => new THREE.Vector2(point.x, point.y + yShift));
 }
 
 function transformSymbolLayers(
@@ -587,6 +728,10 @@ function App() {
   const [dienststellungskennzeichenConfig, setDienststellungskennzeichenConfig] = useState<TagConfig>(
     buildDienststellungskennzeichenConfig("molle-hook-v1"),
   );
+  const [fwNdsDienstgradBadgeId, setFwNdsDienstgradBadgeId] = useState(
+    fwNdsBerufsfeuerwehr[0]?.id ?? "",
+  );
+  const [fwNdsDienstgradConfig, setFwNdsDienstgradConfig] = useState<TagConfig>(buildFwNdsDienstgradConfig());
   const [savedSets, setSavedSets] = useState<SavedSet[]>(() => readSavedSets());
   const [saveFeedbackKind, setSaveFeedbackKind] = useState<SaveFeedbackKind>(null);
   const [bedWidth, setBedWidth] = useState(256);
@@ -595,10 +740,13 @@ function App() {
   const [isBuildingSet, setIsBuildingSet] = useState(false);
   const [isBuildingAtemschutz, setIsBuildingAtemschutz] = useState(false);
   const [isBuildingDienststellungskennzeichen, setIsBuildingDienststellungskennzeichen] = useState(false);
+  const [isBuildingFwNdsDienstgrad, setIsBuildingFwNdsDienstgrad] = useState(false);
   const [symbolLayers, setSymbolLayers] = useState<SymbolLayer[] | null>(null);
   const [labelLayers, setLabelLayers] = useState<SymbolLayer[] | null>(null);
   const [dienststellungskennzeichenLayers, setDienststellungskennzeichenLayers] = useState<SymbolLayer[] | null>(null);
+  const [fwNdsDienstgradLayers, setFwNdsDienstgradLayers] = useState<SymbolLayer[] | null>(null);
   const [dienststellungskennzeichenStatus, setDienststellungskennzeichenStatus] = useState("Kennzeichen wird geladen");
+  const [fwNdsDienstgradStatus, setFwNdsDienstgradStatus] = useState("Dienstgrad wird geladen");
   const [symbolStatus, setSymbolStatus] = useState("Symbol wird geladen");
   const [selectedCategory, setSelectedCategory] = useState(
     symbolCatalog.find((symbol) => symbol.id === defaultTagConfig.symbolId)?.category ??
@@ -697,6 +845,24 @@ function App() {
     });
     setSaveFeedbackKind("dienststellungskennzeichen-thw");
   };
+  const saveCurrentFwNdsDienstgradSet = () => {
+    setSavedSets((current) => {
+      const nextSet: SavedFwNdsDienstgradSet = {
+        kind: "dienstgrade-fw-nds",
+        savedAt: new Date().toISOString(),
+        quantity: 1,
+        badgeId: fwNdsDienstgradBadgeId,
+        config: {
+          ...buildFwNdsDienstgradConfig(),
+          ...fwNdsDienstgradConfig,
+        },
+      };
+      const nextSavedSets = [nextSet, ...current];
+      window.localStorage.setItem(savedSetStorageKey, JSON.stringify(nextSavedSets));
+      return nextSavedSets;
+    });
+    setSaveFeedbackKind("dienstgrade-fw-nds");
+  };
   const updateSavedSetQuantity = (index: number, quantity: number) => {
     setSavedSets((current) => {
       const nextSets = current.map((entry, entryIndex) =>
@@ -723,6 +889,14 @@ function App() {
       const badge = thwDienststellungskennzeichen.find((candidate) => candidate.id === entry.badgeId);
       if (!badge) return;
       const layers = await loadDienststellungskennzeichenLayers(badge.path, entry.config, entry.formId);
+      download3mf(entry.config, layers);
+      return;
+    }
+
+    if (entry.kind === "dienstgrade-fw-nds") {
+      const badge = fwNdsBerufsfeuerwehr.find((candidate) => candidate.id === entry.badgeId);
+      if (!badge) return;
+      const layers = await loadFwNdsDienstgradLayers(badge.path, entry.config);
       download3mf(entry.config, layers);
       return;
     }
@@ -785,6 +959,22 @@ function App() {
         return promise;
       };
 
+      const loadLayersForFwNdsDienstgrad = (savedSet: SavedFwNdsDienstgradSet) => {
+        const cacheKey = `${savedSet.kind}:${savedSet.badgeId}:${JSON.stringify(savedSet.config)}`;
+        const existing = layerCache.get(cacheKey);
+        if (existing) return existing;
+
+        const badge = fwNdsBerufsfeuerwehr.find((candidate) => candidate.id === savedSet.badgeId);
+        const promise = badge
+          ? loadFwNdsDienstgradLayers(badge.path, savedSet.config).then((layers) => ({
+              symbolLayers: layers,
+            }))
+          : Promise.resolve({ symbolLayers: undefined });
+
+        layerCache.set(cacheKey, promise);
+        return promise;
+      };
+
       const expandedItems = (
         await Promise.all(
           savedSets.flatMap((savedSet) =>
@@ -805,6 +995,21 @@ function App() {
                 const layers = await loadLayersForDienststellungskennzeichen(savedSet);
                 return {
                   kind: "dienststellungskennzeichen-thw",
+                  badgeId: savedSet.badgeId,
+                  config: savedSet.config,
+                  symbolLayers: layers.symbolLayers,
+                  width: savedSet.config.width,
+                  height: savedSet.config.height,
+                  thickness: savedSet.config.baseThickness,
+                  x: 0,
+                  y: 0,
+                } satisfies PackedItem;
+              }
+
+              if (savedSet.kind === "dienstgrade-fw-nds") {
+                const layers = await loadLayersForFwNdsDienstgrad(savedSet);
+                return {
+                  kind: "dienstgrade-fw-nds",
                   badgeId: savedSet.badgeId,
                   config: savedSet.config,
                   symbolLayers: layers.symbolLayers,
@@ -874,6 +1079,15 @@ function App() {
             };
           }
 
+          if (item.kind === "dienstgrade-fw-nds") {
+            return {
+              kind: "dienstgrade-fw-nds" as const,
+              config: item.config as TagConfig,
+              symbolLayers: item.symbolLayers,
+              transform,
+            };
+          }
+
           return {
             kind: "taktische-zeichen" as const,
             config: item.config as TagConfig,
@@ -909,6 +1123,18 @@ function App() {
       download3mf(dienststellungskennzeichenConfig, dienststellungskennzeichenLayers);
     } finally {
       setIsBuildingDienststellungskennzeichen(false);
+    }
+  };
+  const downloadFwNdsDienstgrad = async () => {
+    if (isBuildingFwNdsDienstgrad) return;
+    setIsBuildingFwNdsDienstgrad(true);
+    await waitForUiPaint();
+
+    try {
+      if (!fwNdsDienstgradLayers?.length) return;
+      download3mf(fwNdsDienstgradConfig, fwNdsDienstgradLayers);
+    } finally {
+      setIsBuildingFwNdsDienstgrad(false);
     }
   };
   const applyBaseForm = (baseFormId: TagConfig["baseFormId"]) => {
@@ -976,6 +1202,9 @@ function App() {
     thwDienststellungskennzeichen.find((entry) => entry.id === dienststellungskennzeichenBadgeId) ??
     thwDienststellungskennzeichen[0];
 
+  const selectedFwNdsDienstgrad =
+    fwNdsBerufsfeuerwehr.find((entry) => entry.id === fwNdsDienstgradBadgeId) ?? fwNdsBerufsfeuerwehr[0];
+
   useEffect(() => {
     if (!selectedDienststellungskennzeichen) return;
 
@@ -1015,6 +1244,87 @@ function App() {
     dienststellungskennzeichenConfig.symbolScale,
     dienststellungskennzeichenConfig.minLineThickness,
     dienststellungskennzeichenConfig.symbolYOffset,
+  ]);
+
+  useEffect(() => {
+    if (!selectedFwNdsDienstgrad) return;
+
+    setFwNdsDienstgradConfig((current) => ({
+      ...current,
+      symbolScale: 100,
+    }));
+  }, [selectedFwNdsDienstgrad?.path]);
+
+  useEffect(() => {
+    if (!selectedFwNdsDienstgrad) return;
+
+    let cancelled = false;
+    getFwNdsBadgeAspectRatio(selectedFwNdsDienstgrad.path).then((aspectRatio) => {
+      if (cancelled) return;
+      const effectiveScale = (fwNdsDienstgradConfig.symbolScale * getFwNdsBaseScale(selectedFwNdsDienstgrad.path)) / 100;
+      setFwNdsDienstgradConfig((current) => ({
+        ...current,
+        height: computeFwNdsKeychainHeight(
+          current.width,
+          aspectRatio,
+          effectiveScale,
+        ),
+      }));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedFwNdsDienstgrad?.path, fwNdsDienstgradConfig.width, fwNdsDienstgradConfig.symbolScale]);
+
+  useEffect(() => {
+    if (!fwNdsDienstgradLayers?.length) return;
+
+    const bounds = getLayerBounds(fwNdsDienstgradLayers);
+    if (!bounds) return;
+
+    const nextHeight = Math.round((bounds.max.y + 3 + fwNdsDienstgradConfig.width / 2) * 2) / 2;
+    if (Math.abs(nextHeight - fwNdsDienstgradConfig.height) < 0.1) return;
+
+    setFwNdsDienstgradConfig((current) => {
+      if (Math.abs(nextHeight - current.height) < 0.1) return current;
+      return {
+        ...current,
+        height: nextHeight,
+      };
+    });
+  }, [fwNdsDienstgradLayers, fwNdsDienstgradConfig.width, fwNdsDienstgradConfig.height]);
+
+  useEffect(() => {
+    if (!selectedFwNdsDienstgrad) return;
+
+    let cancelled = false;
+    setFwNdsDienstgradStatus("Dienstgrad wird geladen");
+    loadFwNdsDienstgradLayers(selectedFwNdsDienstgrad.path, fwNdsDienstgradConfig)
+      .then((layers) => {
+        if (cancelled) return;
+        setFwNdsDienstgradLayers(layers);
+        const shapeCount = layers.reduce((sum, layer) => sum + layer.shapes.length, 0);
+        const strokeCount = layers.reduce((sum, layer) => sum + layer.flatGeometries.length, 0);
+        setFwNdsDienstgradStatus(
+          `${layers.length} Farben, ${shapeCount} Fuellflaechen, ${strokeCount} Linienflaechen geladen`,
+        );
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setFwNdsDienstgradLayers(null);
+        setFwNdsDienstgradStatus(
+          error instanceof Error ? error.message : "Dienstgrad konnte nicht geladen werden",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedFwNdsDienstgrad?.path,
+    fwNdsDienstgradConfig.width,
+    fwNdsDienstgradConfig.symbolScale,
   ]);
 
   const decorativeLayers = useMemo(
@@ -1172,6 +1482,26 @@ function App() {
                     step={0.1}
                     onChange={(cornerRadius) => update({ cornerRadius })}
                   />
+                  {config.baseFormId === "magnet-neodyn-rueckseite" ? (
+                    <>
+                      <NumberField
+                        label="Sackloch Ø mm"
+                        value={config.magnetPocketDiameter}
+                        min={2}
+                        max={30}
+                        step={0.1}
+                        onChange={(magnetPocketDiameter) => update({ magnetPocketDiameter })}
+                      />
+                      <NumberField
+                        label="Sackloch Tiefe mm"
+                        value={config.magnetPocketDepth}
+                        min={0.5}
+                        max={6}
+                        step={0.1}
+                        onChange={(magnetPocketDepth) => update({ magnetPocketDepth })}
+                      />
+                    </>
+                  ) : null}
                 </section>
 
                 <section className="subpanel">
@@ -1351,6 +1681,134 @@ function App() {
               config={dienststellungskennzeichenConfig}
               symbolLayers={dienststellungskennzeichenLayers ?? undefined}
             />
+          </section>
+        </main>
+      ) : page === "dienstgrade-fw-nds" ? (
+        <main className="app-shell">
+          <aside className="sidebar">
+            <div>
+              <h2 className="section-kicker">Dienstgrade FW NDS</h2>
+              <p className="muted">
+                Berufsfeuerwehr Niedersachsen, aktuell als Schlüsselanhänger.
+              </p>
+            </div>
+
+            <section className="panel">
+              <h2>Dienstgrad</h2>
+              <label className="field">
+                <span>Auswahl</span>
+                <select
+                  value={fwNdsDienstgradBadgeId}
+                  onChange={(event) => setFwNdsDienstgradBadgeId(event.target.value)}
+                >
+                  {fwNdsBerufsfeuerwehrGroups.map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.entries.map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={fwNdsDienstgradConfig.doubleSided}
+                  onChange={(event) =>
+                    setFwNdsDienstgradConfig((current) => ({
+                      ...current,
+                      doubleSided: event.target.checked,
+                    }))
+                  }
+                />
+                <span>Beidseitig</span>
+              </label>
+              <p className="hint">{fwNdsDienstgradStatus}.</p>
+            </section>
+
+            <details className="panel details-panel">
+              <summary>Details</summary>
+              <div className="details-content">
+                <section className="subpanel">
+                  <NumberField
+                    label="Breite mm"
+                    value={fwNdsDienstgradConfig.width}
+                    min={20}
+                    max={60}
+                    step={0.5}
+                    onChange={(width) =>
+                      setFwNdsDienstgradConfig((current) => ({
+                        ...current,
+                        width,
+                      }))
+                    }
+                  />
+                  <label className="field">
+                    <span>Laenge mm (auto)</span>
+                    <input type="number" value={fwNdsDienstgradConfig.height} readOnly />
+                  </label>
+                  <NumberField
+                    label="Dicke mm"
+                    value={fwNdsDienstgradConfig.baseThickness}
+                    min={1.5}
+                    max={8}
+                    step={0.1}
+                    onChange={(baseThickness) =>
+                      setFwNdsDienstgradConfig((current) => ({
+                        ...current,
+                        baseThickness,
+                      }))
+                    }
+                  />
+                  <NumberField
+                    label="Inlay-Dicke mm"
+                    value={fwNdsDienstgradConfig.inlayThickness}
+                    min={0.2}
+                    max={1.2}
+                    step={0.05}
+                    onChange={(inlayThickness) =>
+                      setFwNdsDienstgradConfig((current) => ({
+                        ...current,
+                        inlayThickness,
+                      }))
+                    }
+                  />
+                  <NumberField
+                    label="Grafikgroesse %"
+                    value={fwNdsDienstgradConfig.symbolScale}
+                    min={40}
+                    max={120}
+                    step={1}
+                    onChange={(symbolScale) =>
+                      setFwNdsDienstgradConfig((current) => ({
+                        ...current,
+                        symbolScale,
+                      }))
+                    }
+                  />
+                </section>
+              </div>
+            </details>
+
+            <div className="button-row">
+              <button
+                type="button"
+                className={isBuildingFwNdsDienstgrad ? "primary-button busy-button" : "primary-button"}
+                disabled={isBuildingFwNdsDienstgrad || !fwNdsDienstgradLayers?.length}
+                onClick={() => void downloadFwNdsDienstgrad()}
+              >
+                {isBuildingFwNdsDienstgrad ? "3MF wird erzeugt..." : "3MF herunterladen"}
+              </button>
+              <button type="button" className="secondary-button" onClick={saveCurrentFwNdsDienstgradSet}>
+                {saveFeedbackKind === "dienstgrade-fw-nds" ? "Zum Stapel hinzugefügt" : "Auf Stapel legen"}
+              </button>
+            </div>
+          </aside>
+
+          <section className="preview-area">
+            <TagPreview config={fwNdsDienstgradConfig} symbolLayers={fwNdsDienstgradLayers ?? undefined} />
           </section>
         </main>
       ) : page === "atemschutz" ? (

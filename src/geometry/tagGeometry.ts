@@ -19,6 +19,7 @@ const inlayBottomOverlap = 0.06;
 export function createTagGeometries(config: TagConfig, symbolLayers?: SymbolLayer[]): TagGeometries {
   const baseShape = createBaseShape(config);
   const hasBacksideInlays = config.baseFormId === "schluesselanhaenger-klein" && config.doubleSided;
+  const hasBottomPocket = config.baseFormId === "magnet-neodyn-rueckseite";
   const fallbackLayer = {
     color: config.inlayColor,
     shapes: [createSymbolPlaceholderShape(config)],
@@ -33,16 +34,19 @@ export function createTagGeometries(config: TagConfig, symbolLayers?: SymbolLaye
   const backLayerShapes = hasBacksideInlays
     ? topInlayShapes.map((shapes) => shapes.map((shape) => mirrorShapeX(shape)))
     : [];
+  const bottomPocketShapes = hasBottomPocket ? [createMagnetPocketShape(config)] : [];
   const topPocketFootprintShapes = unionShapes(topInlayShapes.flat());
-  const backPocketFootprintShapes = hasBacksideInlays ? unionShapes(backLayerShapes.flat()) : [];
+  const backPocketFootprintShapes = hasBacksideInlays ? unionShapes(backLayerShapes.flat()) : bottomPocketShapes;
   const bottomThickness = Math.max(0.1, config.baseThickness - config.inlayThickness);
-  const bottomPocketCeilingZ = Math.min(config.inlayThickness, config.baseThickness - 0.1);
+  const bottomPocketCeilingZ = hasBacksideInlays
+    ? Math.min(config.inlayThickness, config.baseThickness - 0.1)
+    : Math.min(config.magnetPocketDepth, config.baseThickness - 0.1);
 
   const baseTopShapes = subtractShapes([createBaseShape(config)], topPocketFootprintShapes);
-  const baseBottomShapes = hasBacksideInlays
+  const baseBottomShapes = hasBacksideInlays || hasBottomPocket
     ? subtractShapes([createBaseShape(config)], backPocketFootprintShapes)
     : [baseShape];
-  const baseBottom = hasBacksideInlays
+  const baseBottom = hasBacksideInlays || hasBottomPocket
     ? createDoubleSidedSteppedBaseGeometry(
         baseShape,
         baseBottomShapes,
@@ -86,6 +90,14 @@ export function createTagGeometries(config: TagConfig, symbolLayers?: SymbolLaye
   });
 
   return { baseBottom, baseTop, inlays };
+}
+
+function createMagnetPocketShape(config: TagConfig) {
+  const radius = Math.max(0.5, config.magnetPocketDiameter / 2);
+  const shape = new THREE.Shape();
+  shape.absarc(0, config.height / 2, radius, 0, Math.PI * 2, false);
+  shape.closePath();
+  return shape;
 }
 
 function getLayerFootprintShapes(layer: SymbolLayer) {
