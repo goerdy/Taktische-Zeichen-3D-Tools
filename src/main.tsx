@@ -7,10 +7,15 @@ import type { TagConfig } from "./geometry/tagConfig";
 import { defaultTagConfig } from "./geometry/tagConfig";
 import { baseFormOptions, getBaseFormOption } from "./geometry/baseForms";
 import { download3mf, download3mfSet } from "./export/export3mf";
+import { downloadBatch3mfSet } from "./export/exportBatch3mf";
 import { symbolCatalog } from "./symbols/catalog";
 import { loadLabelLayers } from "./symbols/loadLabelShapes";
 import { loadSymbolLayers } from "./symbols/loadSymbolShapes";
 import type { SymbolLayer } from "./symbols/symbolLayer";
+import { AtemschutzPreview } from "./atemschutz/AtemschutzPreview";
+import type { AtemschutzConfig } from "./atemschutz/atemschutzConfig";
+import { defaultAtemschutzConfig } from "./atemschutz/atemschutzConfig";
+import { downloadAtemschutz3mf } from "./atemschutz/exportAtemschutz3mf";
 
 type PageId =
   | "taktische-zeichen"
@@ -46,18 +51,75 @@ const runtimeLibraries = [
 ];
 
 const savedSetStorageKey = "goerdys-3d-tools-saved-sets";
+const atemschutzPresets: Array<{ id: string; label: string; config: AtemschutzConfig }> = [
+  {
+    id: "thw",
+    label: "THW",
+    config: {
+      ...defaultAtemschutzConfig,
+      mainTextSeparator: true,
+    },
+  },
+  {
+    id: "fw-wvh",
+    label: "FW WVH",
+    config: {
+      ...defaultAtemschutzConfig,
+      baseColor: "#C1121F",
+      mainTextLine1: "M. Mustermann",
+      mainTextLine2: "BF WA 3",
+      bottomTextLine1: "J: M/R",
+      bottomTextLine2: "H: M/R",
+      mainTextLine1Color: "#000000",
+      mainTextLine2Color: "#000000",
+      mainTextSeparator: true,
+      bottomTextLine1Color: "#000000",
+      bottomTextLine2Color: "#000000",
+    },
+  },
+  {
+    id: "feuerwehr",
+    label: "FEUERWEHR",
+    config: {
+      ...defaultAtemschutzConfig,
+      baseColor: "#C1121F",
+      mainTextLine1: "M. Mustermann",
+      mainTextLine2: "OF PUSTEMUCKEL",
+      bottomTextLine1: "AGT",
+      bottomTextLine2: "CSA",
+      mainTextLine1Color: "#000000",
+      mainTextLine2Color: "#000000",
+      mainTextSeparator: true,
+      bottomTextLine1Color: "#000000",
+      bottomTextLine2Color: "#000000",
+    },
+  },
+];
 
-type SavedTagSet = {
+type SavedBatchBase = {
   savedAt: string;
   quantity: number;
+};
+
+type SavedTagSet = SavedBatchBase & {
+  kind: "taktische-zeichen";
   config: TagConfig;
 };
 
+type SavedAtemschutzSet = SavedBatchBase & {
+  kind: "atemschutz";
+  config: AtemschutzConfig;
+};
+
+type SavedSet = SavedTagSet | SavedAtemschutzSet;
+
 type PackedItem = {
-  config: TagConfig;
+  kind: SavedSet["kind"];
+  config: TagConfig | AtemschutzConfig;
   symbolLayers?: SymbolLayer[];
   width: number;
   height: number;
+  thickness: number;
   x: number;
   y: number;
 };
@@ -82,7 +144,7 @@ function SectionCard({
   );
 }
 
-function readSavedSets(): SavedTagSet[] {
+function readSavedSets(): SavedSet[] {
   if (typeof window === "undefined") return [];
 
   try {
@@ -92,16 +154,35 @@ function readSavedSets(): SavedTagSet[] {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
 
-    return parsed.flatMap((entry) => {
+    return parsed.flatMap<SavedSet>((entry) => {
       if (!entry || typeof entry !== "object") return [];
 
-      const candidate = entry as Partial<SavedTagSet> & { config?: Partial<TagConfig> };
+      const candidate = entry as Partial<SavedSet> & {
+        kind?: SavedSet["kind"];
+        config?: Partial<TagConfig> | Partial<AtemschutzConfig>;
+      };
       if (typeof candidate.savedAt !== "string" || !candidate.config) return [];
+
+      const quantity = typeof candidate.quantity === "number" && candidate.quantity > 0 ? candidate.quantity : 1;
+      if (candidate.kind === "atemschutz") {
+        return [
+          {
+            kind: "atemschutz",
+            savedAt: candidate.savedAt,
+            quantity,
+            config: {
+              ...defaultAtemschutzConfig,
+              ...candidate.config,
+            } as AtemschutzConfig,
+          },
+        ];
+      }
 
       return [
         {
+          kind: "taktische-zeichen",
           savedAt: candidate.savedAt,
-          quantity: typeof candidate.quantity === "number" && candidate.quantity > 0 ? candidate.quantity : 1,
+          quantity,
           config: {
             ...defaultTagConfig,
             ...candidate.config,
@@ -126,11 +207,43 @@ function getBaseFormName(baseFormId: TagConfig["baseFormId"]) {
   return baseFormOptions.find((option) => option.id === baseFormId)?.name ?? baseFormId;
 }
 
-function sanitizeSavedConfig(config: TagConfig): TagConfig {
+function sanitizeSavedTagConfig(config: TagConfig): TagConfig {
   return {
     ...config,
     inlayColor: defaultTagConfig.inlayColor,
   };
+}
+
+function sanitizeSavedAtemschutzConfig(config: AtemschutzConfig): AtemschutzConfig {
+  return {
+    ...defaultAtemschutzConfig,
+    ...config,
+  };
+}
+
+function getSavedSetTypeLabel(entry: SavedSet) {
+  return entry.kind === "taktische-zeichen" ? "Taktisches Zeichen" : "Atemschutz";
+}
+
+function getSavedSetDescription(entry: SavedSet) {
+  if (entry.kind === "taktische-zeichen") {
+    const parts = [getBaseFormName(entry.config.baseFormId), getSymbolName(entry.config.symbolId)];
+    if (entry.config.labelText) parts.push(entry.config.labelText);
+    return parts.join(" · ");
+  }
+
+  const parts = [entry.config.mainTextLine1, entry.config.mainTextLine2, entry.config.bottomTextLine1, entry.config.bottomTextLine2]
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return parts.join(" · ") || "Atemschutz-Anhaenger";
+}
+
+function getSavedSetDimensions(entry: SavedSet) {
+  return `${entry.config.width} x ${entry.config.height} mm`;
+}
+
+function getSavedSetBaseColor(entry: SavedSet) {
+  return entry.config.baseColor;
 }
 
 function packItemsForPlates(items: PackedItem[], bedWidth: number, bedHeight: number) {
@@ -236,11 +349,13 @@ function waitForUiPaint() {
 function App() {
   const [page, setPage] = useState<PageId>(() => getPageFromHash());
   const [config, setConfig] = useState<TagConfig>(defaultTagConfig);
-  const [savedSets, setSavedSets] = useState<SavedTagSet[]>(() => readSavedSets());
+  const [atemschutzConfig, setAtemschutzConfig] = useState<AtemschutzConfig>(defaultAtemschutzConfig);
+  const [savedSets, setSavedSets] = useState<SavedSet[]>(() => readSavedSets());
   const [bedWidth, setBedWidth] = useState(256);
   const [bedHeight, setBedHeight] = useState(256);
   const [topSideOnBed, setTopSideOnBed] = useState(false);
   const [isBuildingSet, setIsBuildingSet] = useState(false);
+  const [isBuildingAtemschutz, setIsBuildingAtemschutz] = useState(false);
   const [symbolLayers, setSymbolLayers] = useState<SymbolLayer[] | null>(null);
   const [labelLayers, setLabelLayers] = useState<SymbolLayer[] | null>(null);
   const [symbolStatus, setSymbolStatus] = useState("Symbol wird geladen");
@@ -275,33 +390,42 @@ function App() {
   const update = (patch: Partial<TagConfig>) => {
     setConfig((current) => ({ ...current, ...patch }));
   };
+  const updateAtemschutz = (patch: Partial<AtemschutzConfig>) => {
+    setAtemschutzConfig((current) => ({ ...current, ...patch }));
+  };
+  const applyAtemschutzPreset = (preset: AtemschutzConfig) => {
+    setAtemschutzConfig(preset);
+  };
   const saveCurrentSet = () => {
     setSavedSets((current) => {
       const nextSet: SavedTagSet = {
+        kind: "taktische-zeichen",
         savedAt: new Date().toISOString(),
         quantity: 1,
-        config: sanitizeSavedConfig(config),
+        config: sanitizeSavedTagConfig(config),
       };
       const nextSavedSets = [nextSet, ...current];
       window.localStorage.setItem(savedSetStorageKey, JSON.stringify(nextSavedSets));
       return nextSavedSets;
     });
   };
-  const updateSavedSet = (index: number, patch: Partial<SavedTagSet>) => {
+  const saveCurrentAtemschutzSet = () => {
+    setSavedSets((current) => {
+      const nextSet: SavedAtemschutzSet = {
+        kind: "atemschutz",
+        savedAt: new Date().toISOString(),
+        quantity: 1,
+        config: sanitizeSavedAtemschutzConfig(atemschutzConfig),
+      };
+      const nextSavedSets = [nextSet, ...current];
+      window.localStorage.setItem(savedSetStorageKey, JSON.stringify(nextSavedSets));
+      return nextSavedSets;
+    });
+  };
+  const updateSavedSetQuantity = (index: number, quantity: number) => {
     setSavedSets((current) => {
       const nextSets = current.map((entry, entryIndex) =>
-        entryIndex === index
-          ? {
-              ...entry,
-              ...patch,
-              config: patch.config
-                ? sanitizeSavedConfig({
-                    ...entry.config,
-                    ...patch.config,
-                  })
-                : entry.config,
-            }
-          : entry,
+        entryIndex === index ? { ...entry, quantity } : entry,
       );
       window.localStorage.setItem(savedSetStorageKey, JSON.stringify(nextSets));
       return nextSets;
@@ -314,7 +438,12 @@ function App() {
       return nextSets;
     });
   };
-  const downloadSavedSet = async (entry: SavedTagSet) => {
+  const downloadSavedSet = async (entry: SavedSet) => {
+    if (entry.kind === "atemschutz") {
+      await downloadAtemschutz3mf(entry.config);
+      return;
+    }
+
     const selected = symbolCatalog.find((symbol) => symbol.id === entry.config.symbolId) ?? symbolCatalog[0];
     if (!selected) return;
 
@@ -361,12 +490,26 @@ function App() {
         await Promise.all(
           savedSets.flatMap((savedSet) =>
             Array.from({ length: savedSet.quantity }, async () => {
+              if (savedSet.kind === "atemschutz") {
+                return {
+                  kind: "atemschutz",
+                  config: savedSet.config,
+                  width: savedSet.config.width,
+                  height: savedSet.config.height,
+                  thickness: savedSet.config.thickness,
+                  x: 0,
+                  y: 0,
+                } satisfies PackedItem;
+              }
+
               const layers = await loadLayersForConfig(savedSet);
               return {
+                kind: "taktische-zeichen",
                 config: savedSet.config,
                 symbolLayers: layers.symbolLayers,
                 width: savedSet.config.width,
                 height: savedSet.config.height,
+                thickness: savedSet.config.baseThickness,
                 x: 0,
                 y: 0,
               } satisfies PackedItem;
@@ -377,14 +520,12 @@ function App() {
 
       const plates = packItemsForPlates(expandedItems, bedWidth, bedHeight).map((plate, index) => ({
         name: `platte-${index + 1}`,
-        items: plate.map((item) => ({
-          config: item.config,
-          symbolLayers: item.symbolLayers,
-          transform: topSideOnBed
+        items: plate.map((item) => {
+          const transform = topSideOnBed
             ? {
                 x: item.x + item.width / 2,
                 y: item.y + item.height,
-                z: item.config.baseThickness,
+                z: item.thickness,
                 matrix: [1, 0, 0, 0, -1, 0, 0, 0, -1] as [
                   number,
                   number,
@@ -400,13 +541,39 @@ function App() {
             : {
                 x: item.x + item.width / 2,
                 y: item.y,
-              },
-        })),
+              };
+
+          if (item.kind === "atemschutz") {
+            return {
+              kind: "atemschutz" as const,
+              config: item.config as AtemschutzConfig,
+              transform,
+            };
+          }
+
+          return {
+            kind: "taktische-zeichen" as const,
+            config: item.config as TagConfig,
+            symbolLayers: item.symbolLayers,
+            transform,
+          };
+        }),
       }));
 
-      download3mfSet(plates);
+      await downloadBatch3mfSet(plates);
     } finally {
       setIsBuildingSet(false);
+    }
+  };
+  const downloadAtemschutz = async () => {
+    if (isBuildingAtemschutz) return;
+    setIsBuildingAtemschutz(true);
+    await waitForUiPaint();
+
+    try {
+      await downloadAtemschutz3mf(atemschutzConfig);
+    } finally {
+      setIsBuildingAtemschutz(false);
     }
   };
   const applyBaseForm = (baseFormId: TagConfig["baseFormId"]) => {
@@ -701,6 +868,209 @@ function App() {
             />
           </section>
         </main>
+      ) : page === "atemschutz" ? (
+        <main className="app-shell">
+          <aside className="sidebar">
+            <div>
+              <h2 className="section-kicker">Atemschutz</h2>
+              <p className="muted">
+                Browser-only Entwurf fuer lange Atemschutz-Anhaenger mit frei einstellbaren Textfarben.
+              </p>
+            </div>
+
+            <section className="panel">
+              <h2>Presets</h2>
+              <div className="button-row">
+                {atemschutzPresets.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => applyAtemschutzPreset(preset.config)}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="panel">
+              <h2>Haupttext</h2>
+              <label className="field">
+                <span>Zeile 1</span>
+                <input
+                  type="text"
+                  value={atemschutzConfig.mainTextLine1}
+                  onChange={(event) => updateAtemschutz({ mainTextLine1: event.target.value })}
+                />
+              </label>
+              <label className="field color-field">
+                <span>Farbe Zeile 1</span>
+                <input
+                  type="color"
+                  value={atemschutzConfig.mainTextLine1Color}
+                  onChange={(event) => updateAtemschutz({ mainTextLine1Color: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Zeile 2</span>
+                <input
+                  type="text"
+                  value={atemschutzConfig.mainTextLine2}
+                  onChange={(event) => updateAtemschutz({ mainTextLine2: event.target.value })}
+                />
+              </label>
+              <label className="field color-field">
+                <span>Farbe Zeile 2</span>
+                <input
+                  type="color"
+                  value={atemschutzConfig.mainTextLine2Color}
+                  onChange={(event) => updateAtemschutz({ mainTextLine2Color: event.target.value })}
+                />
+              </label>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={atemschutzConfig.mainTextSeparator}
+                  onChange={(event) => updateAtemschutz({ mainTextSeparator: event.target.checked })}
+                />
+                <span>Horizontale Linie zwischen Zeile 1 und 2</span>
+              </label>
+              <p className="hint">
+                Ist nur eine Zeile gefuellt, nutzt sie die volle Breite. Zwei Zeilen werden laengs nebeneinander gesetzt.
+              </p>
+            </section>
+
+            <section className="panel">
+              <h2>Unterer Text</h2>
+              <label className="field">
+                <span>Kurztext 1</span>
+                <input
+                  type="text"
+                  value={atemschutzConfig.bottomTextLine1}
+                  onChange={(event) => updateAtemschutz({ bottomTextLine1: event.target.value })}
+                />
+              </label>
+              <label className="field color-field">
+                <span>Farbe Kurztext 1</span>
+                <input
+                  type="color"
+                  value={atemschutzConfig.bottomTextLine1Color}
+                  onChange={(event) => updateAtemschutz({ bottomTextLine1Color: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Kurztext 2</span>
+                <input
+                  type="text"
+                  value={atemschutzConfig.bottomTextLine2}
+                  onChange={(event) => updateAtemschutz({ bottomTextLine2: event.target.value })}
+                />
+              </label>
+              <label className="field color-field">
+                <span>Farbe Kurztext 2</span>
+                <input
+                  type="color"
+                  value={atemschutzConfig.bottomTextLine2Color}
+                  onChange={(event) => updateAtemschutz({ bottomTextLine2Color: event.target.value })}
+                />
+              </label>
+            </section>
+
+            <details className="panel details-panel">
+              <summary>Details</summary>
+              <div className="details-content">
+                <section className="subpanel">
+                  <NumberField
+                    label="Breite mm"
+                    value={atemschutzConfig.width}
+                    min={15}
+                    max={60}
+                    step={0.5}
+                    onChange={(width) => updateAtemschutz({ width })}
+                  />
+                  <NumberField
+                    label="Laenge mm"
+                    value={atemschutzConfig.height}
+                    min={60}
+                    max={180}
+                    step={1}
+                    onChange={(height) => updateAtemschutz({ height })}
+                  />
+                  <NumberField
+                    label="Dicke mm"
+                    value={atemschutzConfig.thickness}
+                    min={1.5}
+                    max={8}
+                    step={0.1}
+                    onChange={(thickness) => updateAtemschutz({ thickness })}
+                  />
+                  <NumberField
+                    label="Loch mm"
+                    value={atemschutzConfig.holeDiameter}
+                    min={2}
+                    max={15}
+                    step={0.1}
+                    onChange={(holeDiameter) => updateAtemschutz({ holeDiameter })}
+                  />
+                  <NumberField
+                    label="Lochabstand oben mm"
+                    value={atemschutzConfig.holeOffsetFromTop}
+                    min={5}
+                    max={30}
+                    step={0.5}
+                    onChange={(holeOffsetFromTop) => updateAtemschutz({ holeOffsetFromTop })}
+                  />
+                  <NumberField
+                    label="Eckenradius mm"
+                    value={atemschutzConfig.cornerRadius}
+                    min={0}
+                    max={12}
+                    step={0.1}
+                    onChange={(cornerRadius) => updateAtemschutz({ cornerRadius })}
+                  />
+                  <NumberField
+                    label="Textdicke mm"
+                    value={atemschutzConfig.textThickness}
+                    min={0.2}
+                    max={1.2}
+                    step={0.05}
+                    onChange={(textThickness) => updateAtemschutz({ textThickness })}
+                  />
+                  <label className="field color-field">
+                    <span>Grundfarbe</span>
+                    <input
+                      type="color"
+                      value={atemschutzConfig.baseColor}
+                      onChange={(event) => updateAtemschutz({ baseColor: event.target.value })}
+                    />
+                  </label>
+                </section>
+              </div>
+            </details>
+
+            <div className="button-row">
+              <button
+                type="button"
+                className={isBuildingAtemschutz ? "primary-button busy-button" : "primary-button"}
+                disabled={isBuildingAtemschutz}
+                onClick={() => void downloadAtemschutz()}
+              >
+                {isBuildingAtemschutz ? "3MF wird erzeugt..." : "3MF herunterladen"}
+              </button>
+              <button type="button" className="secondary-button" onClick={saveCurrentAtemschutzSet}>
+                Auf Stapel legen
+              </button>
+              {isBuildingAtemschutz ? (
+                <p className="hint busy-hint">3MF-Datei wird erzeugt. Bitte warten.</p>
+              ) : null}
+            </div>
+          </aside>
+
+          <section className="preview-area">
+            <AtemschutzPreview config={atemschutzConfig} />
+          </section>
+        </main>
       ) : (
         <main className="placeholder-page">
           {page === "stapelverarbeitung" ? (
@@ -713,9 +1083,8 @@ function App() {
                       <tr>
                         <th>Menge</th>
                         <th>Zeitpunkt</th>
-                        <th>Grundform</th>
-                        <th>Zeichen</th>
-                        <th>Beschriftung</th>
+                        <th>Typ</th>
+                        <th>Details</th>
                         <th>Maße</th>
                         <th>Grundfarbe</th>
                         <th>Aktionen</th>
@@ -732,20 +1101,15 @@ function App() {
                               step={1}
                               value={entry.quantity}
                               onChange={(event) =>
-                                updateSavedSet(index, {
-                                  quantity: Math.max(1, Number(event.target.value) || 1),
-                                })
+                                updateSavedSetQuantity(index, Math.max(1, Number(event.target.value) || 1))
                               }
                             />
                           </td>
                           <td>{formatSavedAt(entry.savedAt)}</td>
-                          <td>{getBaseFormName(entry.config.baseFormId)}</td>
-                          <td>{getSymbolName(entry.config.symbolId)}</td>
-                          <td>{entry.config.labelText || "-"}</td>
-                          <td>
-                            {entry.config.width} x {entry.config.height} mm
-                          </td>
-                          <td>{entry.config.baseColor}</td>
+                          <td>{getSavedSetTypeLabel(entry)}</td>
+                          <td>{getSavedSetDescription(entry)}</td>
+                          <td>{getSavedSetDimensions(entry)}</td>
+                          <td>{getSavedSetBaseColor(entry)}</td>
                           <td>
                             <div className="row-actions">
                               <button
