@@ -45,22 +45,55 @@ let fontPromise: Promise<Font> | null = null;
 export async function createAtemschutzGeometries(config: AtemschutzConfig): Promise<AtemschutzGeometries> {
   const font = await loadEmbeddedFont();
   const baseShape = createBaseShape(config);
-  const inlayShapes = createTextInlayShapes(config, font);
-  const pocketShapes = unionShapes(
-    inlayShapes.flatMap((entry) => entry.shapes.map((shape) => offsetShape(shape, inlaySideOverlap))),
+  const topInlayShapes = createTextInlayShapes(config, font);
+  const backInlayShapes = config.doubleSided
+    ? topInlayShapes.map((entry) => ({
+        ...entry,
+        shapes: entry.shapes.map((shape) => mirrorShapeX(shape)),
+      }))
+    : [];
+  const topPocketShapes = unionShapes(
+    topInlayShapes.flatMap((entry) => entry.shapes.map((shape) => offsetShape(shape, inlaySideOverlap))),
   );
+  const backPocketShapes = config.doubleSided
+    ? unionShapes(
+        backInlayShapes.flatMap((entry) => entry.shapes.map((shape) => offsetShape(shape, inlaySideOverlap))),
+      )
+    : [];
   const pocketFloorZ = Math.max(0.1, config.thickness - config.textThickness);
-  const baseBottom = pocketShapes.length
-    ? createSteppedBaseGeometry(baseShape, subtractShapes([baseShape], pocketShapes), pocketShapes, pocketFloorZ, config.thickness)
-    : extrude(baseShape, config.thickness);
+  const baseBottom = config.doubleSided
+    ? createDoubleSidedSteppedBaseGeometry(
+        baseShape,
+        subtractShapes([baseShape], backPocketShapes),
+        subtractShapes([baseShape], topPocketShapes),
+        backPocketShapes,
+        topPocketShapes,
+        Math.min(config.textThickness, config.thickness - 0.1),
+        pocketFloorZ,
+        config.thickness,
+      )
+    : topPocketShapes.length
+      ? createSteppedBaseGeometry(
+          baseShape,
+          subtractShapes([baseShape], topPocketShapes),
+          topPocketShapes,
+          pocketFloorZ,
+          config.thickness,
+        )
+      : extrude(baseShape, config.thickness);
   const baseTop = new THREE.BufferGeometry();
   const bottomOverlap = Math.min(inlayBottomOverlap, Math.max(0, pocketFloorZ - 0.02));
   const inlayDepth = Math.max(0.05, config.textThickness + bottomOverlap);
-  const inlays = inlayShapes.map((entry) => ({
+  const inlays = topInlayShapes.map((entry, index) => ({
     name: entry.name,
     color: entry.color,
     geometry: mergeGeometries(
-      entry.shapes.map((shape) => createInlayGeometry(shape, pocketFloorZ - bottomOverlap, inlayDepth)),
+      [
+        ...entry.shapes.map((shape) => createInlayGeometry(shape, pocketFloorZ - bottomOverlap, inlayDepth)),
+        ...(config.doubleSided
+          ? backInlayShapes[index].shapes.map((shape) => createInlayGeometry(shape, 0, inlayDepth))
+          : []),
+      ],
     ),
   }));
 
@@ -87,6 +120,28 @@ function createBaseShape(config: AtemschutzConfig) {
   const hole = new THREE.Path();
   hole.absarc(0, holeY, holeRadius, 0, Math.PI * 2, true);
   shape.holes.push(hole);
+
+  return shape;
+}
+
+function createInsetBaseShape(config: AtemschutzConfig, inset: number) {
+  const width = Math.max(0.5, config.width - inset * 2);
+  const height = Math.max(width / 2 + inset + 0.5, config.height - inset * 2);
+  const halfWidth = width / 2;
+  const bottomRadius = Math.max(0, Math.min(config.cornerRadius - inset, halfWidth, height / 2));
+  const topRadius = Math.max(0.1, halfWidth);
+  const topCenterY = config.height - config.width / 2;
+  const bottomY = inset;
+  const shape = new THREE.Shape();
+
+  shape.moveTo(-halfWidth + bottomRadius, bottomY);
+  shape.lineTo(halfWidth - bottomRadius, bottomY);
+  shape.quadraticCurveTo(halfWidth, bottomY, halfWidth, bottomY + bottomRadius);
+  shape.lineTo(halfWidth, topCenterY);
+  shape.absarc(0, topCenterY, topRadius, 0, Math.PI, false);
+  shape.lineTo(-halfWidth, bottomY + bottomRadius);
+  shape.quadraticCurveTo(-halfWidth, bottomY, -halfWidth + bottomRadius, bottomY);
+  shape.closePath();
 
   return shape;
 }
@@ -191,7 +246,43 @@ function createTextInlayShapes(config: AtemschutzConfig, font: Font): InlayShape
     }
   }
 
+  if (config.frameEnabled) {
+    inlays.push({
+      name: "Rahmen",
+      color: config.frameColor,
+      shapes: createFrameShapes(config),
+    });
+  }
+
   return inlays;
+}
+
+function createFrameShapes(config: AtemschutzConfig) {
+  const lineWidth = 0.8;
+  return [
+    createOuterFrameBand(config, lineWidth),
+    createHoleFrameBand(config, lineWidth),
+  ];
+}
+
+function createOuterFrameBand(config: AtemschutzConfig, lineWidth: number) {
+  const outerShape = createBaseShape(config);
+  const innerShape = createInsetBaseShape(config, lineWidth);
+  const shape = new THREE.Shape(dedupeClosingPoint(outerShape.getPoints(128)));
+  shape.holes.push(new THREE.Path(dedupeClosingPoint(innerShape.getPoints(128)).reverse()));
+  return shape;
+}
+
+function createHoleFrameBand(config: AtemschutzConfig, lineWidth: number) {
+  const holeY = config.height - config.holeOffsetFromTop;
+  const outerRadius = config.holeDiameter / 2 + lineWidth;
+  const innerRadius = Math.max(0.2, config.holeDiameter / 2);
+  const shape = new THREE.Shape();
+  shape.absarc(0, holeY, outerRadius, 0, Math.PI * 2, false);
+  const hole = new THREE.Path();
+  hole.absarc(0, holeY, innerRadius, 0, Math.PI * 2, true);
+  shape.holes.push(hole);
+  return shape;
 }
 
 function createMainTextSeparatorShape(area: { yMin: number; yMax: number }) {
@@ -265,6 +356,16 @@ function transformShape(shape: THREE.Shape, transform: (point: THREE.Vector2) =>
   return next;
 }
 
+function mirrorShapeX(shape: THREE.Shape): THREE.Shape {
+  const mirror = (point: THREE.Vector2) => new THREE.Vector2(-point.x, point.y);
+  const contour = dedupeClosingPoint(shape.getPoints(96)).map(mirror).reverse();
+  const mirrored = new THREE.Shape(contour);
+  mirrored.holes = shape.holes.map(
+    (hole) => new THREE.Path(dedupeClosingPoint(hole.getPoints(96)).map(mirror).reverse()),
+  );
+  return mirrored;
+}
+
 function offsetShape(shape: THREE.Shape, overlap: number): THREE.Shape {
   const allPoints = [...shape.getPoints(64), ...shape.holes.flatMap((hole) => hole.getPoints(64))];
   if (allPoints.length === 0) return shape;
@@ -316,6 +417,47 @@ function createSteppedBaseGeometry(
   addShapeWalls(positions, indices, baseShape, 0, topZ, false);
   for (const shape of pocketShapes) {
     addShapeWalls(positions, indices, shape, pocketFloorZ, topZ, true);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function createDoubleSidedSteppedBaseGeometry(
+  baseShape: THREE.Shape,
+  bottomShapes: THREE.Shape[],
+  topShapes: THREE.Shape[],
+  bottomPocketShapes: THREE.Shape[],
+  topPocketShapes: THREE.Shape[],
+  bottomPocketCeilingZ: number,
+  topPocketFloorZ: number,
+  topZ: number,
+) {
+  const positions: number[] = [];
+  const indices: number[] = [];
+
+  for (const shape of bottomShapes) {
+    addShapeFace(positions, indices, shape, 0, false);
+  }
+  for (const shape of topShapes) {
+    addShapeFace(positions, indices, shape, topZ, true);
+  }
+  for (const shape of bottomPocketShapes) {
+    addShapeFace(positions, indices, shape, bottomPocketCeilingZ, false);
+  }
+  for (const shape of topPocketShapes) {
+    addShapeFace(positions, indices, shape, topPocketFloorZ, true);
+  }
+
+  addShapeWalls(positions, indices, baseShape, 0, topZ, false);
+  for (const shape of bottomPocketShapes) {
+    addShapeWalls(positions, indices, shape, 0, bottomPocketCeilingZ, true);
+  }
+  for (const shape of topPocketShapes) {
+    addShapeWalls(positions, indices, shape, topPocketFloorZ, topZ, true);
   }
 
   const geometry = new THREE.BufferGeometry();

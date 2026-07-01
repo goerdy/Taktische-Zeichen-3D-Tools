@@ -8,6 +8,14 @@ type MeshData = {
   triangles: Array<[number, number, number]>;
 };
 
+type ColoredMeshData = {
+  vertices: Array<[number, number, number]>;
+  triangles: Array<{
+    vertices: [number, number, number];
+    materialIndex: number;
+  }>;
+};
+
 type MaterialInfo = {
   color: string;
 };
@@ -36,6 +44,7 @@ export async function downloadAtemschutz3mf(config: AtemschutzConfig) {
       materialIndex: materialIndexByColor.get(normalizeMaterialColor(object.color)) ?? 0,
     })),
     materials,
+    config.doubleSided,
   );
 
   baseBottom.dispose();
@@ -86,16 +95,26 @@ function buildMaterials(colors: string[]) {
 function buildModelXml(
   objects: Array<{ name: string; mesh: MeshData; materialIndex: number }>,
   materials: MaterialInfo[],
+  combineObjects = false,
 ) {
   let nextObjectId = 2;
   const objectXmls: string[] = [];
   const buildItems: string[] = [];
 
-  for (const object of objects) {
-    if (object.mesh.vertices.length === 0 || object.mesh.triangles.length === 0) continue;
-    const objectId = nextObjectId++;
-    objectXmls.push(objectXml(objectId, object.name, object.mesh, object.materialIndex));
-    buildItems.push(`<item objectid="${objectId}" />`);
+  if (combineObjects) {
+    const combined = buildCombinedMesh(objects);
+    if (combined.vertices.length > 0 && combined.triangles.length > 0) {
+      const objectId = nextObjectId++;
+      objectXmls.push(objectXmlColored(objectId, "Atemschutz kombiniert", combined));
+      buildItems.push(`<item objectid="${objectId}" />`);
+    }
+  } else {
+    for (const object of objects) {
+      if (object.mesh.vertices.length === 0 || object.mesh.triangles.length === 0) continue;
+      const objectId = nextObjectId++;
+      objectXmls.push(objectXml(objectId, object.name, object.mesh, object.materialIndex));
+      buildItems.push(`<item objectid="${objectId}" />`);
+    }
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -113,11 +132,46 @@ function buildModelXml(
 </model>`;
 }
 
+function buildCombinedMesh(objects: Array<{ mesh: MeshData; materialIndex: number }>): ColoredMeshData {
+  const combined: ColoredMeshData = { vertices: [], triangles: [] };
+
+  for (const object of objects) {
+    if (object.mesh.vertices.length === 0 || object.mesh.triangles.length === 0) continue;
+    const offset = combined.vertices.length;
+    combined.vertices.push(...object.mesh.vertices);
+    combined.triangles.push(
+      ...object.mesh.triangles.map((vertices) => ({
+        vertices: [vertices[0] + offset, vertices[1] + offset, vertices[2] + offset] as [number, number, number],
+        materialIndex: object.materialIndex,
+      })),
+    );
+  }
+
+  return combined;
+}
+
 function objectXml(id: number, name: string, mesh: MeshData, materialIndex: number) {
   const vertices = mesh.vertices.map(([x, y, z]) => `<vertex x="${x}" y="${y}" z="${z}" />`).join("");
   const triangles = mesh.triangles
     .map(
       ([v1, v2, v3]) =>
+        `<triangle v1="${v1}" v2="${v2}" v3="${v3}" pid="${colorGroupResourceId}" p1="${materialIndex}" p2="${materialIndex}" p3="${materialIndex}" />`,
+    )
+    .join("");
+
+  return `<object id="${id}" type="model" name="${escapeXml(name)}">
+      <mesh>
+        <vertices>${vertices}</vertices>
+        <triangles>${triangles}</triangles>
+      </mesh>
+    </object>`;
+}
+
+function objectXmlColored(id: number, name: string, mesh: ColoredMeshData) {
+  const vertices = mesh.vertices.map(([x, y, z]) => `<vertex x="${x}" y="${y}" z="${z}" />`).join("");
+  const triangles = mesh.triangles
+    .map(
+      ({ vertices: [v1, v2, v3], materialIndex }) =>
         `<triangle v1="${v1}" v2="${v2}" v3="${v3}" pid="${colorGroupResourceId}" p1="${materialIndex}" p2="${materialIndex}" p3="${materialIndex}" />`,
     )
     .join("");

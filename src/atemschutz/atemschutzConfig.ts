@@ -6,6 +6,9 @@ export type AtemschutzConfig = {
   holeOffsetFromTop: number;
   cornerRadius: number;
   textThickness: number;
+  doubleSided: boolean;
+  frameEnabled: boolean;
+  frameColor: string;
   baseColor: string;
   mainTextLine1: string;
   mainTextLine2: string;
@@ -26,6 +29,9 @@ export const defaultAtemschutzConfig: AtemschutzConfig = {
   holeOffsetFromTop: 10,
   cornerRadius: 3,
   textThickness: 0.4,
+  doubleSided: false,
+  frameEnabled: false,
+  frameColor: "#FFFFFF",
   baseColor: "#1D4ED8",
   mainTextLine1: "M. Mustermann",
   mainTextLine2: "OV MUSTERSTADT",

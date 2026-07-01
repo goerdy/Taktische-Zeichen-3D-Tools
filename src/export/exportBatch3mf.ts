@@ -144,6 +144,7 @@ async function buildItemMeshData(item: ExportBatchItem) {
 
   return {
     kind: item.kind,
+    config: item.config,
     transform: item.transform,
     objects,
     dispose: () => {
@@ -187,7 +188,7 @@ function buildModelXml(
 
   items.forEach((item, itemIndex) => {
     const itemLabel = items.length > 1 ? ` ${itemIndex + 1}` : "";
-    if (item.kind !== "atemschutz" && shouldExportAsSingleObject(item.config)) {
+    if (shouldExportAsSingleObject(item.config)) {
       const combinedMesh: ColoredMeshData = { vertices: [], triangles: [] };
       item.objects.forEach((object) => {
         const materialIndex = materialIndexByColor.get(normalizeMaterialColor(object.color)) ?? 0;
@@ -319,8 +320,11 @@ function buildColoredMesh(source: MeshData, materialIndex: number, transform?: I
   return mesh;
 }
 
-function shouldExportAsSingleObject(config: TagConfig) {
-  return config.baseFormId === "schluesselanhaenger-klein" && config.doubleSided;
+function shouldExportAsSingleObject(config: TagConfig | AtemschutzConfig) {
+  if ("baseFormId" in config) {
+    return config.baseFormId === "schluesselanhaenger-klein" && config.doubleSided;
+  }
+  return config.doubleSided;
 }
 
 function appendColoredMesh(

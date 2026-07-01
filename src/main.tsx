@@ -68,6 +68,7 @@ const atemschutzPresets: Array<{ id: string; label: string; config: AtemschutzCo
     config: {
       ...defaultAtemschutzConfig,
       mainTextSeparator: true,
+      frameColor: "#FFFFFF",
     },
   },
   {
@@ -85,6 +86,7 @@ const atemschutzPresets: Array<{ id: string; label: string; config: AtemschutzCo
       mainTextSeparator: true,
       bottomTextLine1Color: "#000000",
       bottomTextLine2Color: "#000000",
+      frameColor: "#000000",
     },
   },
   {
@@ -102,6 +104,7 @@ const atemschutzPresets: Array<{ id: string; label: string; config: AtemschutzCo
       mainTextSeparator: true,
       bottomTextLine1Color: "#000000",
       bottomTextLine2Color: "#000000",
+      frameColor: "#000000",
     },
   },
 ];
@@ -1878,6 +1881,30 @@ function App() {
                   onChange={(event) => updateAtemschutz({ mainTextSeparator: event.target.checked })}
                 />
                 <span>Horizontale Linie zwischen Zeile 1 und 2</span>
+              </label>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={atemschutzConfig.doubleSided}
+                  onChange={(event) => updateAtemschutz({ doubleSided: event.target.checked })}
+                />
+                <span>Beidseitig</span>
+              </label>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={atemschutzConfig.frameEnabled}
+                  onChange={(event) => updateAtemschutz({ frameEnabled: event.target.checked })}
+                />
+                <span>Rahmen an Oberkante und Loch</span>
+              </label>
+              <label className="field color-field">
+                <span>Rahmenfarbe</span>
+                <input
+                  type="color"
+                  value={atemschutzConfig.frameColor}
+                  onChange={(event) => updateAtemschutz({ frameColor: event.target.value })}
+                />
               </label>
               <p className="hint">
                 Ist nur eine Zeile gefuellt, nutzt sie die volle Breite. Zwei Zeilen werden laengs nebeneinander gesetzt.
