@@ -20,7 +20,7 @@ export type AtemschutzConfig = {
 
 export const defaultAtemschutzConfig: AtemschutzConfig = {
   width: 25,
-  height: 120,
+  height: 107,
   thickness: 3,
   holeDiameter: 7,
   holeOffsetFromTop: 10,
@@ -33,7 +33,7 @@ export const defaultAtemschutzConfig: AtemschutzConfig = {
   bottomTextLine2: "CBRN",
   mainTextLine1Color: "#FFFFFF",
   mainTextLine2Color: "#FFFFFF",
-  mainTextSeparator: false,
+  mainTextSeparator: true,
   bottomTextLine1Color: "#FFFFFF",
   bottomTextLine2Color: "#FFFFFF",
 };

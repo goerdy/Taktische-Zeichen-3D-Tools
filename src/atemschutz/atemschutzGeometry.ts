@@ -100,7 +100,7 @@ function createTextInlayShapes(config: AtemschutzConfig, font: Font): InlayShape
   const mainArea = {
     xMin: -config.width / 2 + 2.2,
     xMax: config.width / 2 - 2.2,
-    yMin: 28,
+    yMin: 23.5,
     yMax: config.height - config.holeOffsetFromTop - config.holeDiameter / 2 - 6,
   };
   const mainTextLayouts = mainLines.flatMap((line, index) => {
@@ -151,12 +151,16 @@ function createTextInlayShapes(config: AtemschutzConfig, font: Font): InlayShape
   const bottomArea = {
     xMin: -config.width / 2 + 2,
     xMax: config.width / 2 - 2,
-    yMin: 5,
-    yMax: 24,
+    yMin: 0.6,
+    yMax: 22.6,
   };
   const bottomTextLayouts = bottomLines.flatMap((line, index) => {
-    const rowHeight = (bottomArea.yMax - bottomArea.yMin) / bottomLines.length;
-    const yMax = bottomLines.length === 1 ? bottomArea.yMax : bottomArea.yMax - rowHeight * index;
+    const gap = 0.35;
+    const totalHeight = bottomArea.yMax - bottomArea.yMin;
+    const rowHeight =
+      bottomLines.length === 1 ? totalHeight : Math.max(1, (totalHeight - gap) / bottomLines.length);
+    const yMax =
+      bottomLines.length === 1 ? bottomArea.yMax : bottomArea.yMax - (rowHeight + gap) * index;
     const yMin = bottomLines.length === 1 ? bottomArea.yMin : yMax - rowHeight;
     const prepared = prepareTextShapes(font, line.text);
     if (!prepared) return [];

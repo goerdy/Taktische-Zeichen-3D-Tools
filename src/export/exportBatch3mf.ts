@@ -38,6 +38,12 @@ export type ExportBatchItem =
       transform?: ItemTransform;
     }
   | {
+      kind: "dienststellungskennzeichen-thw";
+      config: TagConfig;
+      symbolLayers?: SymbolLayer[];
+      transform?: ItemTransform;
+    }
+  | {
       kind: "atemschutz";
       config: AtemschutzConfig;
       transform?: ItemTransform;
@@ -80,7 +86,7 @@ async function build3mfArchive(items: ExportBatchItem[]) {
 }
 
 async function buildItemMeshData(item: ExportBatchItem) {
-  if (item.kind === "taktische-zeichen") {
+  if (item.kind === "taktische-zeichen" || item.kind === "dienststellungskennzeichen-thw") {
     const { baseBottom, baseTop, inlays } = createTagGeometries(item.config, item.symbolLayers);
     const base = mergeMeshData([geometryToMeshData(baseBottom), geometryToMeshData(baseTop)]);
     const objects = [

@@ -11,11 +11,15 @@ import { downloadBatch3mfSet } from "./export/exportBatch3mf";
 import { symbolCatalog } from "./symbols/catalog";
 import { loadLabelLayers } from "./symbols/loadLabelShapes";
 import { loadSymbolLayers } from "./symbols/loadSymbolShapes";
-import type { SymbolLayer } from "./symbols/symbolLayer";
+import { cloneSymbolLayers, type SymbolLayer } from "./symbols/symbolLayer";
 import { AtemschutzPreview } from "./atemschutz/AtemschutzPreview";
 import type { AtemschutzConfig } from "./atemschutz/atemschutzConfig";
 import { defaultAtemschutzConfig } from "./atemschutz/atemschutzConfig";
 import { downloadAtemschutz3mf } from "./atemschutz/exportAtemschutz3mf";
+import {
+  thwDienststellungskennzeichen,
+  type DienststellungskennzeichenFormId,
+} from "./dienststellungskennzeichen/thwCatalog";
 
 type PageId =
   | "taktische-zeichen"
@@ -67,7 +71,7 @@ const atemschutzPresets: Array<{ id: string; label: string; config: AtemschutzCo
       ...defaultAtemschutzConfig,
       baseColor: "#C1121F",
       mainTextLine1: "M. Mustermann",
-      mainTextLine2: "BF WA 3",
+      mainTextLine2: "BF WHV - WA 3",
       bottomTextLine1: "J: M/R",
       bottomTextLine2: "H: M/R",
       mainTextLine1Color: "#000000",
@@ -101,6 +105,12 @@ type SavedBatchBase = {
   quantity: number;
 };
 
+type SaveFeedbackKind =
+  | "taktische-zeichen"
+  | "atemschutz"
+  | "dienststellungskennzeichen-thw"
+  | null;
+
 type SavedTagSet = SavedBatchBase & {
   kind: "taktische-zeichen";
   config: TagConfig;
@@ -111,11 +121,19 @@ type SavedAtemschutzSet = SavedBatchBase & {
   config: AtemschutzConfig;
 };
 
-type SavedSet = SavedTagSet | SavedAtemschutzSet;
+type SavedDienststellungskennzeichenSet = SavedBatchBase & {
+  kind: "dienststellungskennzeichen-thw";
+  badgeId: string;
+  formId: DienststellungskennzeichenFormId;
+  config: TagConfig;
+};
+
+type SavedSet = SavedTagSet | SavedAtemschutzSet | SavedDienststellungskennzeichenSet;
 
 type PackedItem = {
   kind: SavedSet["kind"];
   config: TagConfig | AtemschutzConfig;
+  badgeId?: string;
   symbolLayers?: SymbolLayer[];
   width: number;
   height: number;
@@ -178,6 +196,30 @@ function readSavedSets(): SavedSet[] {
         ];
       }
 
+      if (candidate.kind === "dienststellungskennzeichen-thw") {
+        const badgeId = typeof (candidate as SavedDienststellungskennzeichenSet).badgeId === "string"
+          ? (candidate as SavedDienststellungskennzeichenSet).badgeId
+          : thwDienststellungskennzeichen[0].id;
+        const formId =
+          (candidate as SavedDienststellungskennzeichenSet).formId === "schluesselanhaenger"
+            ? "schluesselanhaenger"
+            : "molle-hook-v1";
+
+        return [
+          {
+            kind: "dienststellungskennzeichen-thw",
+            savedAt: candidate.savedAt,
+            quantity,
+            badgeId,
+            formId,
+            config: {
+              ...buildDienststellungskennzeichenConfig(formId),
+              ...candidate.config,
+            } as TagConfig,
+          },
+        ];
+      }
+
       return [
         {
           kind: "taktische-zeichen",
@@ -221,8 +263,56 @@ function sanitizeSavedAtemschutzConfig(config: AtemschutzConfig): AtemschutzConf
   };
 }
 
+function buildDienststellungskennzeichenConfig(formId: DienststellungskennzeichenFormId): TagConfig {
+  if (formId === "schluesselanhaenger") {
+    return {
+      ...defaultTagConfig,
+      baseFormId: "schluesselanhaenger-klein",
+      width: 30,
+      height: 97,
+      baseThickness: 3,
+      cornerRadius: 1.5,
+      hookDepth: 0,
+      hookStep: 0,
+      inlayThickness: 0.4,
+      minLineThickness: 0.65,
+      symbolScale: 100,
+      symbolYOffset: 0,
+      doubleSided: false,
+      labelText: "",
+      baseColor: "#003399",
+      inlayColor: "#FFFFFF",
+    };
+  }
+
+  return {
+    ...defaultTagConfig,
+    baseFormId: "molle-hook-v1",
+    width: 80,
+    height: 37,
+    baseThickness: 4,
+    cornerRadius: 1.5,
+    hookDepth: 10,
+    hookStep: 5,
+    inlayThickness: 0.4,
+    minLineThickness: 0.65,
+    symbolScale: 90,
+    symbolYOffset: 0,
+    doubleSided: false,
+    labelText: "",
+    baseColor: "#003399",
+    inlayColor: "#FFFFFF",
+  };
+}
+
+function getDienststellungskennzeichenName(badgeId: string) {
+  return thwDienststellungskennzeichen.find((entry) => entry.id === badgeId)?.name ?? badgeId;
+}
+
 function getSavedSetTypeLabel(entry: SavedSet) {
-  return entry.kind === "taktische-zeichen" ? "Taktisches Zeichen" : "Atemschutz";
+  if (entry.kind === "taktische-zeichen") return "Taktisches Zeichen";
+  if (entry.kind === "atemschutz") return "Atemschutz";
+  return "Dienststellungskennzeichen THW";
 }
 
 function getSavedSetDescription(entry: SavedSet) {
@@ -230,6 +320,12 @@ function getSavedSetDescription(entry: SavedSet) {
     const parts = [getBaseFormName(entry.config.baseFormId), getSymbolName(entry.config.symbolId)];
     if (entry.config.labelText) parts.push(entry.config.labelText);
     return parts.join(" · ");
+  }
+
+  if (entry.kind === "dienststellungskennzeichen-thw") {
+    return `${getDienststellungskennzeichenName(entry.badgeId)} · ${
+      entry.formId === "schluesselanhaenger" ? "Schlüsselanhänger" : "MOLLE"
+    }`;
   }
 
   const parts = [entry.config.mainTextLine1, entry.config.mainTextLine2, entry.config.bottomTextLine1, entry.config.bottomTextLine2]
@@ -346,18 +442,163 @@ function waitForUiPaint() {
   });
 }
 
+async function loadDienststellungskennzeichenLayers(
+  path: string,
+  config: TagConfig,
+  formId: DienststellungskennzeichenFormId,
+) {
+  if (formId === "molle-hook-v1") {
+    const tempConfig: TagConfig = {
+      ...config,
+      width: Math.max(20, config.width - config.hookDepth * 2),
+      symbolScale: 96,
+      symbolYOffset: 0,
+    };
+    const layers = stripDienststellungskennzeichenBackground(await loadSymbolLayers(path, tempConfig));
+    if (!config.labelText.trim()) {
+      return layers;
+    }
+
+    const shiftedLayers = transformSymbolLayers(layers, (point) => new THREE.Vector2(point.x, point.y + 4.2));
+    const textLayers = styleDienststellungskennzeichenLabelLayers(
+      await loadLabelLayers(config.labelText, config),
+      getDienststellungskennzeichenPrimaryColor(layers),
+    );
+    return [...textLayers, ...shiftedLayers];
+  }
+
+  const bodyHeight = Math.max(20, config.height - config.width / 2);
+  const tempConfig: TagConfig = {
+    ...config,
+    baseFormId: "molle-hook-v1",
+    width: Math.max(20, bodyHeight - 3),
+    height: Math.max(12, config.width - 3),
+    hookDepth: 0,
+    hookStep: 0,
+    symbolScale: 100,
+    symbolYOffset: 0,
+  };
+  const layers = stripDienststellungskennzeichenBackground(await loadSymbolLayers(path, tempConfig));
+  const targetCenter = new THREE.Vector2(0, bodyHeight / 2);
+  const sourceCenter = new THREE.Vector2(0, tempConfig.height / 2);
+  return transformSymbolLayers(layers, (point) => {
+    const localX = point.x - sourceCenter.x;
+    const localY = point.y - sourceCenter.y;
+    return new THREE.Vector2(targetCenter.x - localY, targetCenter.y + localX);
+  });
+}
+
+function transformSymbolLayers(
+  layers: SymbolLayer[],
+  transform: (point: THREE.Vector2) => THREE.Vector2,
+) {
+  return cloneSymbolLayers(layers).map((layer) => ({
+    color: layer.color,
+    shapes: layer.shapes.map((shape) => transformShape(shape, transform)),
+    flatGeometries: layer.flatGeometries.map((geometry) => transformFlatGeometry(geometry, transform)),
+  }));
+}
+
+function transformShape(shape: THREE.Shape, transform: (point: THREE.Vector2) => THREE.Vector2) {
+  const next = new THREE.Shape(shape.getPoints(48).map(transform));
+  next.holes = shape.holes.map((hole) => new THREE.Path(hole.getPoints(48).map(transform)));
+  return next;
+}
+
+function transformFlatGeometry(
+  geometry: THREE.BufferGeometry,
+  transform: (point: THREE.Vector2) => THREE.Vector2,
+) {
+  const next = geometry.clone();
+  const position = next.getAttribute("position");
+  for (let index = 0; index < position.count; index += 1) {
+    const point = transform(new THREE.Vector2(position.getX(index), position.getY(index)));
+    position.setXY(index, point.x, point.y);
+  }
+  position.needsUpdate = true;
+  next.computeBoundingBox();
+  next.computeBoundingSphere();
+  return next;
+}
+
+function stripDienststellungskennzeichenBackground(layers: SymbolLayer[]) {
+  return cloneSymbolLayers(layers).filter((layer) => normalizeHexColor(layer.color) !== "#003399");
+}
+
+function getDienststellungskennzeichenPrimaryColor(layers: SymbolLayer[]) {
+  return layers[0]?.color ?? "#FFFFFF";
+}
+
+function styleDienststellungskennzeichenLabelLayers(layers: SymbolLayer[], color: string) {
+  const cloned = cloneSymbolLayers(layers).map((layer) => ({
+    ...layer,
+    color,
+  }));
+  const bounds = getLayerBounds(cloned);
+  if (!bounds) return cloned;
+
+  const center = bounds.getCenter(new THREE.Vector2());
+  const scale = 1.18;
+  return transformSymbolLayers(cloned, (point) => {
+    const x = (point.x - center.x) * scale + center.x;
+    const y = (point.y - center.y) * scale + center.y + 2.1;
+    return new THREE.Vector2(x, y);
+  });
+}
+
+function getLayerBounds(layers: SymbolLayer[]) {
+  const points = [
+    ...layers.flatMap((layer) => layer.shapes.flatMap((shape) => shape.getPoints(32))),
+    ...layers.flatMap((layer) =>
+      layer.flatGeometries.flatMap((geometry) => {
+        const source = geometry.index ? geometry.toNonIndexed() : geometry;
+        const position = source.getAttribute("position");
+        const nextPoints: THREE.Vector2[] = [];
+        for (let index = 0; index < position.count; index += 1) {
+          nextPoints.push(new THREE.Vector2(position.getX(index), position.getY(index)));
+        }
+        if (source !== geometry) source.dispose();
+        return nextPoints;
+      }),
+    ),
+  ];
+  if (points.length === 0) return null;
+  return new THREE.Box2().setFromPoints(points);
+}
+
+function normalizeHexColor(color: string) {
+  const normalized = color.startsWith("#") ? color : `#${color}`;
+  if (normalized.length === 4) {
+    const [, r, g, b] = normalized;
+    return `#${r}${r}${g}${g}${b}${b}`.toUpperCase();
+  }
+  return normalized.slice(0, 7).toUpperCase();
+}
+
 function App() {
   const [page, setPage] = useState<PageId>(() => getPageFromHash());
   const [config, setConfig] = useState<TagConfig>(defaultTagConfig);
   const [atemschutzConfig, setAtemschutzConfig] = useState<AtemschutzConfig>(defaultAtemschutzConfig);
+  const [dienststellungskennzeichenFormId, setDienststellungskennzeichenFormId] =
+    useState<DienststellungskennzeichenFormId>("molle-hook-v1");
+  const [dienststellungskennzeichenBadgeId, setDienststellungskennzeichenBadgeId] = useState(
+    thwDienststellungskennzeichen[0]?.id ?? "",
+  );
+  const [dienststellungskennzeichenConfig, setDienststellungskennzeichenConfig] = useState<TagConfig>(
+    buildDienststellungskennzeichenConfig("molle-hook-v1"),
+  );
   const [savedSets, setSavedSets] = useState<SavedSet[]>(() => readSavedSets());
+  const [saveFeedbackKind, setSaveFeedbackKind] = useState<SaveFeedbackKind>(null);
   const [bedWidth, setBedWidth] = useState(256);
   const [bedHeight, setBedHeight] = useState(256);
   const [topSideOnBed, setTopSideOnBed] = useState(false);
   const [isBuildingSet, setIsBuildingSet] = useState(false);
   const [isBuildingAtemschutz, setIsBuildingAtemschutz] = useState(false);
+  const [isBuildingDienststellungskennzeichen, setIsBuildingDienststellungskennzeichen] = useState(false);
   const [symbolLayers, setSymbolLayers] = useState<SymbolLayer[] | null>(null);
   const [labelLayers, setLabelLayers] = useState<SymbolLayer[] | null>(null);
+  const [dienststellungskennzeichenLayers, setDienststellungskennzeichenLayers] = useState<SymbolLayer[] | null>(null);
+  const [dienststellungskennzeichenStatus, setDienststellungskennzeichenStatus] = useState("Kennzeichen wird geladen");
   const [symbolStatus, setSymbolStatus] = useState("Symbol wird geladen");
   const [selectedCategory, setSelectedCategory] = useState(
     symbolCatalog.find((symbol) => symbol.id === defaultTagConfig.symbolId)?.category ??
@@ -375,6 +616,12 @@ function App() {
   useEffect(() => {
     document.title = `goerdys 3D-Tools - ${activePage.label}`;
   }, [activePage.label]);
+
+  useEffect(() => {
+    if (!saveFeedbackKind) return;
+    const timer = window.setTimeout(() => setSaveFeedbackKind(null), 1400);
+    return () => window.clearTimeout(timer);
+  }, [saveFeedbackKind]);
 
   useEffect(() => {
     const handleStorage = () => setSavedSets(readSavedSets());
@@ -396,6 +643,13 @@ function App() {
   const applyAtemschutzPreset = (preset: AtemschutzConfig) => {
     setAtemschutzConfig(preset);
   };
+  const applyDienststellungskennzeichenForm = (formId: DienststellungskennzeichenFormId) => {
+    setDienststellungskennzeichenFormId(formId);
+    setDienststellungskennzeichenConfig((current) => ({
+      ...buildDienststellungskennzeichenConfig(formId),
+      labelText: current.labelText,
+    }));
+  };
   const saveCurrentSet = () => {
     setSavedSets((current) => {
       const nextSet: SavedTagSet = {
@@ -408,6 +662,7 @@ function App() {
       window.localStorage.setItem(savedSetStorageKey, JSON.stringify(nextSavedSets));
       return nextSavedSets;
     });
+    setSaveFeedbackKind("taktische-zeichen");
   };
   const saveCurrentAtemschutzSet = () => {
     setSavedSets((current) => {
@@ -421,6 +676,26 @@ function App() {
       window.localStorage.setItem(savedSetStorageKey, JSON.stringify(nextSavedSets));
       return nextSavedSets;
     });
+    setSaveFeedbackKind("atemschutz");
+  };
+  const saveCurrentDienststellungskennzeichenSet = () => {
+    setSavedSets((current) => {
+      const nextSet: SavedDienststellungskennzeichenSet = {
+        kind: "dienststellungskennzeichen-thw",
+        savedAt: new Date().toISOString(),
+        quantity: 1,
+        badgeId: dienststellungskennzeichenBadgeId,
+        formId: dienststellungskennzeichenFormId,
+        config: {
+          ...buildDienststellungskennzeichenConfig(dienststellungskennzeichenFormId),
+          ...dienststellungskennzeichenConfig,
+        },
+      };
+      const nextSavedSets = [nextSet, ...current];
+      window.localStorage.setItem(savedSetStorageKey, JSON.stringify(nextSavedSets));
+      return nextSavedSets;
+    });
+    setSaveFeedbackKind("dienststellungskennzeichen-thw");
   };
   const updateSavedSetQuantity = (index: number, quantity: number) => {
     setSavedSets((current) => {
@@ -441,6 +716,14 @@ function App() {
   const downloadSavedSet = async (entry: SavedSet) => {
     if (entry.kind === "atemschutz") {
       await downloadAtemschutz3mf(entry.config);
+      return;
+    }
+
+    if (entry.kind === "dienststellungskennzeichen-thw") {
+      const badge = thwDienststellungskennzeichen.find((candidate) => candidate.id === entry.badgeId);
+      if (!badge) return;
+      const layers = await loadDienststellungskennzeichenLayers(badge.path, entry.config, entry.formId);
+      download3mf(entry.config, layers);
       return;
     }
 
@@ -486,6 +769,22 @@ function App() {
         return promise;
       };
 
+      const loadLayersForDienststellungskennzeichen = (savedSet: SavedDienststellungskennzeichenSet) => {
+        const cacheKey = `${savedSet.kind}:${savedSet.badgeId}:${JSON.stringify(savedSet.config)}`;
+        const existing = layerCache.get(cacheKey);
+        if (existing) return existing;
+
+        const badge = thwDienststellungskennzeichen.find((candidate) => candidate.id === savedSet.badgeId);
+        const promise = badge
+          ? loadDienststellungskennzeichenLayers(badge.path, savedSet.config, savedSet.formId).then((layers) => ({
+              symbolLayers: layers,
+            }))
+          : Promise.resolve({ symbolLayers: undefined });
+
+        layerCache.set(cacheKey, promise);
+        return promise;
+      };
+
       const expandedItems = (
         await Promise.all(
           savedSets.flatMap((savedSet) =>
@@ -497,6 +796,21 @@ function App() {
                   width: savedSet.config.width,
                   height: savedSet.config.height,
                   thickness: savedSet.config.thickness,
+                  x: 0,
+                  y: 0,
+                } satisfies PackedItem;
+              }
+
+              if (savedSet.kind === "dienststellungskennzeichen-thw") {
+                const layers = await loadLayersForDienststellungskennzeichen(savedSet);
+                return {
+                  kind: "dienststellungskennzeichen-thw",
+                  badgeId: savedSet.badgeId,
+                  config: savedSet.config,
+                  symbolLayers: layers.symbolLayers,
+                  width: savedSet.config.width,
+                  height: savedSet.config.height,
+                  thickness: savedSet.config.baseThickness,
                   x: 0,
                   y: 0,
                 } satisfies PackedItem;
@@ -551,6 +865,15 @@ function App() {
             };
           }
 
+          if (item.kind === "dienststellungskennzeichen-thw") {
+            return {
+              kind: "dienststellungskennzeichen-thw" as const,
+              config: item.config as TagConfig,
+              symbolLayers: item.symbolLayers,
+              transform,
+            };
+          }
+
           return {
             kind: "taktische-zeichen" as const,
             config: item.config as TagConfig,
@@ -574,6 +897,18 @@ function App() {
       await downloadAtemschutz3mf(atemschutzConfig);
     } finally {
       setIsBuildingAtemschutz(false);
+    }
+  };
+  const downloadDienststellungskennzeichen = async () => {
+    if (isBuildingDienststellungskennzeichen) return;
+    setIsBuildingDienststellungskennzeichen(true);
+    await waitForUiPaint();
+
+    try {
+      if (!dienststellungskennzeichenLayers?.length) return;
+      download3mf(dienststellungskennzeichenConfig, dienststellungskennzeichenLayers);
+    } finally {
+      setIsBuildingDienststellungskennzeichen(false);
     }
   };
   const applyBaseForm = (baseFormId: TagConfig["baseFormId"]) => {
@@ -635,6 +970,51 @@ function App() {
     config.symbolScale,
     config.minLineThickness,
     config.symbolYOffset,
+  ]);
+
+  const selectedDienststellungskennzeichen =
+    thwDienststellungskennzeichen.find((entry) => entry.id === dienststellungskennzeichenBadgeId) ??
+    thwDienststellungskennzeichen[0];
+
+  useEffect(() => {
+    if (!selectedDienststellungskennzeichen) return;
+
+    let cancelled = false;
+    setDienststellungskennzeichenStatus("Kennzeichen wird geladen");
+    loadDienststellungskennzeichenLayers(
+      selectedDienststellungskennzeichen.path,
+      dienststellungskennzeichenConfig,
+      dienststellungskennzeichenFormId,
+    )
+      .then((layers) => {
+        if (cancelled) return;
+        setDienststellungskennzeichenLayers(layers);
+        const shapeCount = layers.reduce((sum, layer) => sum + layer.shapes.length, 0);
+        const strokeCount = layers.reduce((sum, layer) => sum + layer.flatGeometries.length, 0);
+        setDienststellungskennzeichenStatus(
+          `${layers.length} Farben, ${shapeCount} Fuellflaechen, ${strokeCount} Linienflaechen geladen`,
+        );
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setDienststellungskennzeichenLayers(null);
+        setDienststellungskennzeichenStatus(
+          error instanceof Error ? error.message : "Kennzeichen konnte nicht geladen werden",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedDienststellungskennzeichen?.path,
+    dienststellungskennzeichenFormId,
+    dienststellungskennzeichenConfig.labelText,
+    dienststellungskennzeichenConfig.width,
+    dienststellungskennzeichenConfig.height,
+    dienststellungskennzeichenConfig.symbolScale,
+    dienststellungskennzeichenConfig.minLineThickness,
+    dienststellungskennzeichenConfig.symbolYOffset,
   ]);
 
   const decorativeLayers = useMemo(
@@ -856,7 +1236,7 @@ function App() {
                 3MF herunterladen
               </button>
               <button className="secondary-button" onClick={saveCurrentSet}>
-                Auf Stapel legen
+                {saveFeedbackKind === "taktische-zeichen" ? "Zum Stapel hinzugefügt" : "Auf Stapel legen"}
               </button>
             </div>
           </aside>
@@ -865,6 +1245,111 @@ function App() {
             <TagPreview
               config={config}
               symbolLayers={decorativeLayers.length > 0 ? decorativeLayers : undefined}
+            />
+          </section>
+        </main>
+      ) : page === "dienststellungskennzeichen-thw" ? (
+        <main className="app-shell">
+          <aside className="sidebar">
+            <div>
+              <h2 className="section-kicker">Dienststellungskennzeichen THW</h2>
+              <p className="muted">
+                Feste THW-Kennzeichen auf blauer Grundform, wahlweise als MOLLE-Tag oder Schlüsselanhänger.
+              </p>
+            </div>
+
+            <section className="panel">
+              <h2>Grundform</h2>
+              <label className="field">
+                <span>Form</span>
+                <select
+                  value={dienststellungskennzeichenFormId}
+                  onChange={(event) =>
+                    applyDienststellungskennzeichenForm(
+                      event.target.value as DienststellungskennzeichenFormId,
+                    )
+                  }
+                >
+                  <option value="molle-hook-v1">MOLLE Haken V1</option>
+                  <option value="schluesselanhaenger">Schlüsselanhänger</option>
+                </select>
+              </label>
+            </section>
+
+            <section className="panel">
+              <h2>Kennzeichen</h2>
+              <label className="field">
+                <span>Auswahl</span>
+                <select
+                  value={dienststellungskennzeichenBadgeId}
+                  onChange={(event) => setDienststellungskennzeichenBadgeId(event.target.value)}
+                >
+                  <optgroup label="Zug">
+                    {thwDienststellungskennzeichen
+                      .filter((entry) => entry.group === "Zug")
+                      .map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.name}
+                        </option>
+                      ))}
+                  </optgroup>
+                  <optgroup label="Stab">
+                    {thwDienststellungskennzeichen
+                      .filter((entry) => entry.group === "Stab")
+                      .map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.name}
+                        </option>
+                      ))}
+                  </optgroup>
+                </select>
+              </label>
+              {dienststellungskennzeichenFormId === "molle-hook-v1" ? (
+                <label className="field">
+                  <span>Text</span>
+                  <input
+                    type="text"
+                    value={dienststellungskennzeichenConfig.labelText}
+                    placeholder="Optionaler Text"
+                    onChange={(event) =>
+                      setDienststellungskennzeichenConfig((current) => ({
+                        ...current,
+                        labelText: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              ) : null}
+              <p className="hint">{dienststellungskennzeichenStatus}.</p>
+            </section>
+
+            <div className="button-row">
+              <button
+                type="button"
+                className={
+                  isBuildingDienststellungskennzeichen ? "primary-button busy-button" : "primary-button"
+                }
+                disabled={isBuildingDienststellungskennzeichen || !dienststellungskennzeichenLayers?.length}
+                onClick={() => void downloadDienststellungskennzeichen()}
+              >
+                {isBuildingDienststellungskennzeichen ? "3MF wird erzeugt..." : "3MF herunterladen"}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={saveCurrentDienststellungskennzeichenSet}
+              >
+                {saveFeedbackKind === "dienststellungskennzeichen-thw"
+                  ? "Zum Stapel hinzugefügt"
+                  : "Auf Stapel legen"}
+              </button>
+            </div>
+          </aside>
+
+          <section className="preview-area">
+            <TagPreview
+              config={dienststellungskennzeichenConfig}
+              symbolLayers={dienststellungskennzeichenLayers ?? undefined}
             />
           </section>
         </main>
@@ -1059,7 +1544,7 @@ function App() {
                 {isBuildingAtemschutz ? "3MF wird erzeugt..." : "3MF herunterladen"}
               </button>
               <button type="button" className="secondary-button" onClick={saveCurrentAtemschutzSet}>
-                Auf Stapel legen
+                {saveFeedbackKind === "atemschutz" ? "Zum Stapel hinzugefügt" : "Auf Stapel legen"}
               </button>
               {isBuildingAtemschutz ? (
                 <p className="hint busy-hint">3MF-Datei wird erzeugt. Bitte warten.</p>
@@ -1208,6 +1693,10 @@ function App() {
                   </p>
                   <p className="muted">
                     Die verwendeten taktischen Zeichen stehen unter CC0 1.0.
+                  </p>
+                  <p className="muted">
+                    Die THW-Dienststellungskennzeichen stammen von Wikimedia Commons, wurden von
+                    Thiemo Schuff erstellt und stehen unter CC0 1.0 / Public Domain Dedication.
                   </p>
                   <p className="muted">
                     Verwendete Bibliotheken:
